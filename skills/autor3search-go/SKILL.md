@@ -21,6 +21,8 @@ user. Follow every step and rule in it, in order.
 Install and run autor3search-go on this repository, then optimize it.
 
 Setup:
+0. Run git status. If the working tree has changes, STOP and ask me to
+   commit or stash them first.
 1. go install github.com/autor3search/go/cmd/autor3search-go@latest
    Make sure $(go env GOPATH)/bin is on PATH.
 2. autor3search-go init
