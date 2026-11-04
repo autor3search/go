@@ -209,6 +209,7 @@ clear any pending stop and point the agent back at `program.md`.
 | `status` | Prints where a run is: run branch and whether it is checked out, the frozen baseline commit and the advancing measurement commit, the pinned worktree, how many experiments have run and with what verdicts, whether an `eval` is in flight, and whether a stop is pending. Read-only. Accepts `-tag <tag>` so it works from any branch. |
 | `stop` | Asks the agent to end the run after the experiment it is running: writes a request `eval` reports back as `stop_requested`. `-clear` cancels a pending request; `-force` additionally signals the running `eval` to abandon the current experiment and reports what state that leaves the repository in. Accepts `-tag <tag>`. |
 | `report` | Summarizes `results.tsv`: counts by status, every significant slowdown in the kept experiments, the cumulative speedup as the product of every kept experiment's score, the correctness fixes, the largest individual wins, and the limits of the run. |
+| `compare` | Measures the final code directly against the commit the run started from, and lists the slowdowns first. It finds slowdowns that build up across kept experiments, which no single `eval` can see. It records nothing and decides nothing. Run it before you merge. Small slowdowns can differ from run to run, so use `-count` for more rounds. |
 | `version` | Prints which build of the harness is running: the module version for an installed binary, or the commit for one built from a checkout (marked `dirty` when the tree had uncommitted changes). A `results.tsv` row is only as reproducible as the binary that produced it. |
 
 Every command accepts `-C <dir>` to run against a repository other than the current
@@ -482,8 +483,9 @@ Stated plainly, because performance tools that oversell are worse than useless:
   trips the guard is a decision for you, and the agent stops to ask.
 - **Results cover only the declared benchmarks.** Other inputs can get slower,
   and the guard passes any slowdown under `max_regress_pct`. `report` lists every
-  significant slowdown it measured in a single kept experiment. It cannot list what
-  no benchmark measured, or small slowdowns that build up across experiments.
+  significant slowdown it measured in a single kept experiment. `compare` adds the
+  slowdowns that build up across experiments. Neither can show what no benchmark
+  measured.
 - **Laptops are noisy.** macOS P/E core scheduling makes numbers jump. Interleaving and
   `-count` mitigate it and `doctor` warns you, but a quiet Linux box gives cleaner
   results.

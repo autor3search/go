@@ -213,7 +213,8 @@ still fully valid. When you see it:
    leave a commit on the branch that nothing decided on.
 2. Do NOT start another experiment.
 3. Run `autor3search-go report` and summarize, in a few lines: what you tried,
-   what was kept, and what you would try next if the run resumed.
+   what was kept, every slowdown it lists, and what you would try next if the run
+   resumed. Tell the human to run `autor3search-go compare` before merging.
 4. Exit the loop and say you have stopped because the human asked.
 
 `stop_requested` never changes the exit code, so read it as a separate

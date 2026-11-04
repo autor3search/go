@@ -379,6 +379,48 @@ func Eval(ctx context.Context, o Options) (verdict.Result, *Measurements, error)
 	return result, &Measurements{Time: timeDeltas, Allocs: allocs.Deltas, AllocsAppeared: allocs.Appeared}, nil
 }
 
+// compareWorktreeName is the temporary checkout of the run's start for Compare.
+// The pinned worktree cannot serve: after a KEEP it holds the last kept commit.
+const compareWorktreeName = "compare-worktree"
+
+// Compare measures the working tree against the frozen Base.Commit, with no
+// gates and no verdict. The caller makes sure the tree is clean.
+func Compare(ctx context.Context, o Options) (*Measurements, error) {
+	timeout, err := o.Cfg.TimeoutDuration()
+	if err != nil {
+		return nil, err
+	}
+	worktree := filepath.Join(o.StateDir, compareWorktreeName)
+	// A stale worktree can remain from an interrupted compare. The common case
+	// is that nothing is there, which git also reports as an error.
+	_ = gitx.RemoveWorktree(o.Root, worktree)
+	if err := gitx.AddWorktree(o.Root, worktree, o.Base.Commit); err != nil {
+		return nil, fmt.Errorf("check out the run's start: %w", err)
+	}
+	defer func() { _ = gitx.RemoveWorktree(o.Root, worktree) }()
+
+	baseSet, candSet, err := measure.Run(ctx, measure.Options{
+		BaseDir:   worktree,
+		CandDir:   o.Root,
+		Pattern:   o.Base.Pattern,
+		Benchtime: o.Cfg.Benchtime,
+		Rounds:    o.Cfg.Count,
+		Warmup:    true,
+		Timeout:   timeout,
+		Env:       benchEnv(o.Cfg),
+		Log:       o.Log,
+	})
+	if err != nil {
+		return nil, err
+	}
+	timeDeltas, err := bench.CompareAll(baseSet, candSet, bench.UnitTime)
+	if err != nil {
+		return nil, err
+	}
+	allocs := bench.CompareHints(baseSet, candSet, bench.UnitAllocs)
+	return &Measurements{Time: timeDeltas, Allocs: allocs.Deltas, AllocsAppeared: allocs.Appeared}, nil
+}
+
 // advanceMeasurementBaseline re-points the pinned baseline worktree at the
 // candidate's own commit and persists that commit as the new
 // state.Baseline.MeasureCommit, after a KEEP. See state.Baseline's doc

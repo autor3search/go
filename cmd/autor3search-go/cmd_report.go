@@ -195,7 +195,7 @@ func printSlowdowns(rows []results.Row, slowdowns []results.Slowdown, logged boo
 
 	fmt.Println("\nlimits of this report:")
 	fmt.Println("  - It measures only the declared benchmarks. Other inputs can be slower.")
-	fmt.Println("  - Small slowdowns can build up across kept experiments. No step here measures that.")
+	fmt.Println("  - Small slowdowns can build up across kept experiments. Run `autor3search-go compare` to measure that.")
 	fmt.Println("  - A KEEP does not prove correctness. It proves only that the frozen tests pass.")
 	fmt.Println("  - Compare the final code with the baseline commit on your own inputs before you merge.")
 }
