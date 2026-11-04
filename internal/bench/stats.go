@@ -12,6 +12,10 @@ import (
 // confidence is the confidence level for the reported median interval.
 const confidence = 0.95
 
+// ErrZeroBaseline says a benchmark's baseline median is zero, so no ratio
+// exists. It is normal for allocs/op, and CompareHints handles it per benchmark.
+var ErrZeroBaseline = errors.New("baseline median is zero, cannot form a ratio")
+
 // Delta is the comparison of one benchmark's unit between baseline and candidate.
 type Delta struct {
 	Name string
@@ -64,7 +68,7 @@ func Compare(base, cand *Set, name, unit string) (Delta, error) {
 	cmp := a.Compare(bs, cs)
 
 	if bSum.Center == 0 {
-		return Delta{}, fmt.Errorf("%s: baseline %s median is zero, cannot form a ratio", name, unit)
+		return Delta{}, fmt.Errorf("%s: %s: %w", name, unit, ErrZeroBaseline)
 	}
 
 	ratio := cSum.Center / bSum.Center
@@ -112,6 +116,48 @@ func CompareAll(base, cand *Set, unit string) ([]Delta, error) {
 		return nil, errors.New("no benchmark appears in both baseline and candidate")
 	}
 	return out, nil
+}
+
+// Appeared is a benchmark whose baseline median is zero and whose candidate
+// median is at least one. No percentage can describe that change.
+type Appeared struct {
+	Name       string
+	CandCenter float64
+}
+
+// Hints is the result of comparing an unscored unit such as allocs/op.
+type Hints struct {
+	// Deltas holds every benchmark that has a ratio.
+	Deltas []Delta
+	// Appeared holds every benchmark that went from zero to more than zero.
+	Appeared []Appeared
+	// Skipped says why each other benchmark has no result. A benchmark that
+	// stays at zero is not listed: it has no change to report.
+	Skipped []string
+}
+
+// CompareHints compares an unscored unit one benchmark at a time. Unlike
+// CompareAll, a benchmark that cannot be compared costs only its own result:
+// one allocation-free benchmark must not remove the data of all the others.
+func CompareHints(base, cand *Set, unit string) Hints {
+	var h Hints
+	for _, name := range base.Names() {
+		d, err := Compare(base, cand, name, unit)
+		switch {
+		case err == nil:
+			h.Deltas = append(h.Deltas, d)
+		case errors.Is(err, ErrZeroBaseline):
+			cv, _ := cand.Values(name, unit)
+			th := benchmath.DefaultThresholds
+			center := benchmath.AssumeNothing.Summary(benchmath.NewSample(cv, &th), confidence).Center
+			if center >= 1 { // a smaller median is occasional runtime allocation, not a change
+				h.Appeared = append(h.Appeared, Appeared{Name: name, CandCenter: center})
+			}
+		default:
+			h.Skipped = append(h.Skipped, err.Error())
+		}
+	}
+	return h
 }
 
 // GeoMean returns the geometric mean of the deltas' ratios. This is the single

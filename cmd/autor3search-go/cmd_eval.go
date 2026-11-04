@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -52,8 +53,13 @@ func runEvalCtx(ctx context.Context, args []string) int {
 	dir := fs.String("C", ".", "repository root (or a directory inside it)")
 	jsonOut := fs.Bool("json", false, "print the verdict and deltas as a single JSON object and nothing else")
 	desc := fs.String("desc", "", "short description of this experiment, recorded in results.tsv")
+	fix := fs.Bool("fix", false, "keep this commit as a correctness fix with no speedup required; the regression guard still applies; requires -desc")
 	noLog := fs.Bool("no-log", false, "write subprocess output to stdout instead of run.log")
 	if err := fs.Parse(args); err != nil {
+		return exitUsage
+	}
+	if *fix && strings.TrimSpace(*desc) == "" {
+		fmt.Fprintln(os.Stderr, "autor3search-go eval: -fix requires -desc to say which wrong result the commit fixes")
 		return exitUsage
 	}
 
@@ -74,6 +80,12 @@ func runEvalCtx(ctx context.Context, args []string) int {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "autor3search-go eval: %v\n", err)
 		return exitUsage
+	}
+
+	if *fix {
+		if code := checkFixIsCommitted(root, base); code != exitOK {
+			return code
+		}
 	}
 
 	// baseline.json is written before the worktree pin completes, so its
@@ -158,6 +170,7 @@ func runEvalCtx(ctx context.Context, args []string) int {
 		Cfg:      cfg,
 		Base:     base,
 		Log:      logWriter,
+		Fix:      *fix,
 	})
 
 	// A cancelled context means the human reached for the brake mid-flight
@@ -180,8 +193,9 @@ func runEvalCtx(ctx context.Context, args []string) int {
 	// meas is nil for a gate failure before measurement; treat that the
 	// same as "nothing measured" rather than special-casing it everywhere.
 	var timeDeltas, allocsDeltas []bench.Delta
+	var allocsAppeared []bench.Appeared
 	if meas != nil {
-		timeDeltas, allocsDeltas = meas.Time, meas.Allocs
+		timeDeltas, allocsDeltas, allocsAppeared = meas.Time, meas.Allocs, meas.AllocsAppeared
 	}
 	bestName, bestPct := bestDelta(timeDeltas)
 
@@ -199,14 +213,16 @@ func runEvalCtx(ctx context.Context, args []string) int {
 		// delta — allocations are never scored (see pipeline.Measurements),
 		// this is purely the "why did it get faster" hint for the morning
 		// read. 0 when there is nothing to report (a gate failure, or the
-		// allocs comparison itself was unavailable).
-		AllocsDelta: allocsDeltaFor(allocsDeltas, bestName),
-		Status:      strings.ToLower(string(res.Status)),
+		// allocs comparison itself was unavailable), +Inf when the benchmark
+		// went from zero allocations to some.
+		AllocsDelta: allocsDeltaFor(allocsDeltas, allocsAppeared, bestName),
+		Status:      rowStatus(res),
 		Description: *desc,
 	}); err != nil {
 		fmt.Fprintf(os.Stderr, "autor3search-go eval: append %s: %v\n", resultsPath, err)
 		return exitUsage
 	}
+	res = recordSlowdowns(filepath.Join(root, results.SlowdownsPath), res, commit, timeDeltas)
 
 	// Read the stop request only now that the experiment is scored and
 	// recorded. eval never REFUSES to run because a stop is pending:
@@ -221,6 +237,69 @@ func runEvalCtx(ctx context.Context, args []string) int {
 		printHuman(res, timeDeltas, allocsDeltas, cfg, ctxRun)
 	}
 	return res.ExitCode()
+}
+
+// checkFixIsCommitted refuses a -fix eval that has no commit to keep. Without
+// this, the row would name a commit that does not hold the fix, and the next
+// DISCARD's reset could remove the fix while the report still lists it.
+func checkFixIsCommitted(root string, base *state.Baseline) int {
+	clean, err := gitx.IsClean(root)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "autor3search-go eval: %v\n", err)
+		return exitUsage
+	}
+	if !clean {
+		fmt.Fprintln(os.Stderr, "autor3search-go eval: -fix requires a clean tree: commit the fix first")
+		return exitUsage
+	}
+	head, err := gitx.HeadCommit(root)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "autor3search-go eval: %v\n", err)
+		return exitUsage
+	}
+	if head == base.MeasureCommit {
+		fmt.Fprintf(os.Stderr, "autor3search-go eval: -fix found no new commit: HEAD is already the measured commit %s\n", head)
+		return exitUsage
+	}
+	return exitOK
+}
+
+// recordSlowdowns logs the slowdowns of a commit that stays on the branch. The
+// log is optional, but the KEEP is already applied: the baseline has advanced
+// and the row is written. So a failed write becomes a warning. Aborting here
+// would make the agent drop a commit that the harness now measures against.
+func recordSlowdowns(path string, res verdict.Result, commit string, deltas []bench.Delta) verdict.Result {
+	if res.Status != verdict.StatusKeep {
+		return res
+	}
+	if err := results.AppendSlowdowns(path, slowdownsIn(commit, deltas)); err != nil {
+		msg := fmt.Sprintf("could not log the slowdowns of %s, so `report` will not list them: %v", commit, err)
+		fmt.Fprintf(os.Stderr, "autor3search-go eval: %s\n", msg)
+		res.Warnings = append(res.Warnings, msg)
+	}
+	return res
+}
+
+// rowStatus is the results.tsv status for a verdict. A correctness fix exits
+// like a KEEP, but it is not a win, so the log tells the two apart.
+func rowStatus(res verdict.Result) string {
+	if res.Reason == verdict.ReasonCorrectnessFix {
+		return "fix"
+	}
+	return strings.ToLower(string(res.Status))
+}
+
+// slowdownsIn lists every benchmark that got significantly slower, at the raw
+// alpha and whatever the guard's limit. The guard lets through anything under
+// max_regress_pct, so a kept commit can carry slowdowns the verdict never names.
+func slowdownsIn(commit string, deltas []bench.Delta) []results.Slowdown {
+	var out []results.Slowdown
+	for _, d := range deltas {
+		if d.Significant && d.PctChange > 0 {
+			out = append(out, results.Slowdown{Commit: commit, Benchmark: d.Name, Pct: d.PctChange, P: d.P})
+		}
+	}
+	return out
 }
 
 // reportAbort renders an eval whose context was cancelled mid-experiment.
@@ -308,11 +387,17 @@ func bestDelta(deltas []bench.Delta) (name string, pct float64) {
 }
 
 // allocsDeltaFor returns the allocs/op PctChange for the named benchmark,
-// or 0 when there is nothing to report — no measurement happened, or the
-// allocs comparison itself was unavailable (see pipeline.Measurements).
-func allocsDeltaFor(allocsDeltas []bench.Delta, name string) float64 {
+// +Inf if it went from zero allocations to some, or 0 when there is nothing to
+// report — no measurement happened, or the allocs comparison itself was
+// unavailable (see pipeline.Measurements).
+func allocsDeltaFor(allocsDeltas []bench.Delta, appeared []bench.Appeared, name string) float64 {
 	if d, ok := allocsFor(allocsDeltas, name); ok {
 		return d.PctChange
+	}
+	for _, a := range appeared {
+		if a.Name == name {
+			return math.Inf(1)
+		}
 	}
 	return 0
 }

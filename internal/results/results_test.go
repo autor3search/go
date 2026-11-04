@@ -183,3 +183,56 @@ func TestAppendReportsWriteErrors(t *testing.T) {
 		t.Errorf("error = %v, does not mention path %q", err, p)
 	}
 }
+
+func TestSlowdownsRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sub", "slowdowns.tsv")
+
+	if _, ok, err := LoadSlowdowns(path); err != nil || ok {
+		t.Fatalf("missing log: ok=%v err=%v, want not ok and no error", ok, err)
+	}
+	if err := AppendSlowdowns(path, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("appending nothing created the log (stat err %v): a log with no rows means none recorded", err)
+	}
+
+	if err := ResetSlowdowns(path); err != nil {
+		t.Fatal(err)
+	}
+	rows, ok, err := LoadSlowdowns(path)
+	if err != nil || !ok || len(rows) != 0 {
+		t.Fatalf("empty log: rows=%v ok=%v err=%v, want no rows and ok", rows, ok, err)
+	}
+
+	want := Slowdown{Commit: "abc1234", Benchmark: "BenchmarkAdd/Past64", Pct: 4.37, P: 0.0002}
+	if err := AppendSlowdowns(path, []Slowdown{want}); err != nil {
+		t.Fatal(err)
+	}
+	rows, ok, err = LoadSlowdowns(path)
+	if err != nil || !ok || len(rows) != 1 || rows[0] != want {
+		t.Fatalf("rows=%+v ok=%v err=%v, want [%+v]", rows, ok, err, want)
+	}
+}
+
+func TestLoadSlowdownsRejectsAMalformedLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "slowdowns.tsv")
+	if err := os.WriteFile(path, []byte(SlowdownsHeader+"\nabc\tBenchmarkX\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := LoadSlowdowns(path); err == nil || !strings.Contains(err.Error(), ":2:") {
+		t.Fatalf("err = %v, want an error that names line 2", err)
+	}
+}
+
+// A log created in mid-run would look complete, and report would then hide that
+// the earlier experiments were never recorded.
+func TestAppendSlowdownsDoesNotCreateAMissingLog(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "slowdowns.tsv")
+	if err := AppendSlowdowns(path, []Slowdown{{Commit: "a", Benchmark: "B", Pct: 1, P: 0.01}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := LoadSlowdowns(path); err != nil || ok {
+		t.Fatalf("ok=%v err=%v, want the log still missing", ok, err)
+	}
+}

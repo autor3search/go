@@ -382,3 +382,24 @@ func TestDecideCarriesDeltaWarningsThrough(t *testing.T) {
 		t.Errorf("Warnings = %q, want benchmath's own warning carried through", res.Warnings)
 	}
 }
+
+func TestDecideFixNeedsNoSpeedupButTheGuardStillApplies(t *testing.T) {
+	delta := func(pct float64) []bench.Delta {
+		return []bench.Delta{{Name: "BenchmarkX", Unit: bench.UnitTime, Ratio: 1 + pct/100, PctChange: pct, P: 0.001, Alpha: 0.05, Significant: true, NBase: 8, NCand: 8}}
+	}
+
+	res := Decide(Input{Deltas: delta(2), Score: 1.02, MaxRegressPct: 5, MinEffectPct: 1, Fix: true})
+	if res.Status != StatusKeep || res.Reason != ReasonCorrectnessFix || res.ExitCode() != 0 {
+		t.Errorf("under the guard: got %s/%s exit %d, want KEEP/%s exit 0", res.Status, res.Reason, res.ExitCode(), ReasonCorrectnessFix)
+	}
+
+	res = Decide(Input{Deltas: delta(30), Score: 1.3, MaxRegressPct: 5, MinEffectPct: 1, Fix: true})
+	if res.Status != StatusDiscard || res.Reason != ReasonGuardRegression {
+		t.Errorf("over the guard: got %s/%s, want DISCARD/%s", res.Status, res.Reason, ReasonGuardRegression)
+	}
+
+	res = Decide(Input{Deltas: delta(2), Score: 1.02, MaxRegressPct: 5, MinEffectPct: 1})
+	if res.Status != StatusDiscard {
+		t.Errorf("without Fix: got %s, want DISCARD", res.Status)
+	}
+}

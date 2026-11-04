@@ -58,6 +58,8 @@ type Options struct {
 	// Log receives subprocess output (build/vet/test/bench) and progress
 	// notes such as which frozen files were restored. May be nil.
 	Log io.Writer
+	// Fix declares this commit a correctness fix. See verdict.Input.Fix.
+	Fix bool
 }
 
 // Measurements carries every unit compared for one experiment.
@@ -73,10 +75,14 @@ type Options struct {
 type Measurements struct {
 	// Time is the sec/op delta per benchmark. This is what Decide scores.
 	Time []bench.Delta
-	// Allocs is the allocs/op delta per benchmark, informational only. It
-	// is nil when the comparison itself failed (see Eval) — a missing hint
-	// is never a reason to discard an otherwise-valid experiment.
+	// Allocs is the allocs/op delta per benchmark, informational only. A
+	// benchmark that has no ratio is absent, and Allocs is nil when none has
+	// one (see Eval) — a missing hint is never a reason to discard an
+	// otherwise-valid experiment.
 	Allocs []bench.Delta
+	// AllocsAppeared lists the benchmarks that went from zero allocs/op to one
+	// or more, which have no percentage and so are not in Allocs.
+	AllocsAppeared []bench.Appeared
 }
 
 // Eval runs one experiment: gate correctness, measure, score. It returns a
@@ -121,7 +127,7 @@ func Eval(ctx context.Context, o Options) (verdict.Result, *Measurements, error)
 				fmt.Sprintf("%s may not be modified: dependency changes are a human decision, "+
 					"not an autonomous one", rel)), nil, nil
 		}
-		if rel == results.Path || rel == RunLogName || rel == config.Path {
+		if rel == results.Path || rel == results.SlowdownsPath || rel == RunLogName || rel == config.Path {
 			// Harness output, plus the human-owned config, which is
 			// integrity-checked below rather than scope-checked.
 			continue
@@ -332,16 +338,16 @@ func Eval(ctx context.Context, o Options) (verdict.Result, *Measurements, error)
 		return verdict.Result{}, nil, err
 	}
 
-	// Allocs is informational only (see Measurements). CompareAll is strict
-	// about a benchmark disappearing from one side, which is right for the
-	// scored metric but wrong here: a benchmark that legitimately makes zero
-	// allocations on one side, or any other allocs-specific mismatch, must
-	// not fail a real, correctly-measured experiment over a missing hint.
-	allocsDeltas, err := bench.CompareAll(baseSet, candSet, bench.UnitAllocs)
-	if err != nil {
-		allocsDeltas = nil
-		if o.Log != nil {
-			fmt.Fprintf(o.Log, "allocs/op comparison unavailable, continuing without it: %v\n", err)
+	// Allocs is informational only (see Measurements), so it is compared one
+	// benchmark at a time: a benchmark with no allocations, or any other
+	// allocs-specific mismatch, must not remove the data of the others.
+	allocs := bench.CompareHints(baseSet, candSet, bench.UnitAllocs)
+	if o.Log != nil {
+		for _, reason := range allocs.Skipped {
+			fmt.Fprintf(o.Log, "allocs/op comparison skipped: %s\n", reason)
+		}
+		if len(allocs.Deltas) == 0 {
+			fmt.Fprintln(o.Log, "allocs/op comparison unavailable, continuing without it: no benchmark has a ratio")
 		}
 	}
 
@@ -350,7 +356,12 @@ func Eval(ctx context.Context, o Options) (verdict.Result, *Measurements, error)
 		Score:         score,
 		MaxRegressPct: o.Cfg.MaxRegressPct,
 		MinEffectPct:  o.Cfg.MinEffectPct,
+		Fix:           o.Fix,
 	})
+	for _, a := range allocs.Appeared {
+		result.Warnings = append(result.Warnings,
+			fmt.Sprintf("%s: allocs/op went from 0 to %.0f, which the percentage deltas cannot show", a.Name, a.CandCenter))
+	}
 
 	// 8. Advance the measurement baseline on KEEP. Without this, every
 	// experiment after the first kept one is measured against the run's
@@ -365,7 +376,7 @@ func Eval(ctx context.Context, o Options) (verdict.Result, *Measurements, error)
 		}
 	}
 
-	return result, &Measurements{Time: timeDeltas, Allocs: allocsDeltas}, nil
+	return result, &Measurements{Time: timeDeltas, Allocs: allocs.Deltas, AllocsAppeared: allocs.Appeared}, nil
 }
 
 // advanceMeasurementBaseline re-points the pinned baseline worktree at the

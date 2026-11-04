@@ -184,3 +184,87 @@ func TestReportIncludesBiggestWins(t *testing.T) {
 		t.Errorf("output does not include allocs information:\n%s", output)
 	}
 }
+
+// reportOutput writes the rows and slowdowns to a demo repo and returns report's output.
+func reportOutput(t *testing.T, rows []results.Row, slowdowns []results.Slowdown, logged bool) string {
+	t.Helper()
+	dir := copyDemoRepo(t)
+	for _, row := range rows {
+		if err := results.Append(filepath.Join(dir, results.Path), row); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if logged {
+		path := filepath.Join(dir, results.SlowdownsPath)
+		if err := results.ResetSlowdowns(path); err != nil {
+			t.Fatal(err)
+		}
+		if err := results.AppendSlowdowns(path, slowdowns); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return captureStdout(t, func() {
+		if code := runReport([]string{"-C", dir}); code != exitOK {
+			t.Fatalf("runReport = %d, want %d", code, exitOK)
+		}
+	})
+}
+
+func TestReportListsSlowdownsBeforeWinsAndStatesItsLimits(t *testing.T) {
+	out := reportOutput(t,
+		[]results.Row{
+			{Commit: "aaa", Score: 0.8, BestBenchDelta: -40, Status: "keep", Description: "fast add"},
+			{Commit: "bbb", Score: 1.01, BestBenchDelta: 0.5, Status: "discard", Description: "dropped"},
+		},
+		[]results.Slowdown{
+			{Commit: "aaa", Benchmark: "BenchmarkSmall", Pct: 1.5, P: 0.03},
+			{Commit: "aaa", Benchmark: "BenchmarkBig", Pct: 4.4, P: 0.001},
+			{Commit: "bbb", Benchmark: "BenchmarkDropped", Pct: 9, P: 0.001},
+		}, true)
+
+	if !strings.Contains(out, "slowdowns in kept experiments: 2") {
+		t.Errorf("output does not count 2 slowdowns:\n%s", out)
+	}
+	big, small, wins := strings.Index(out, "BenchmarkBig"), strings.Index(out, "BenchmarkSmall"), strings.Index(out, "largest wins")
+	if big < 0 || small < big || wins < small {
+		t.Errorf("want the largest slowdown first and every slowdown before the wins:\n%s", out)
+	}
+	if strings.Contains(out, "BenchmarkDropped") {
+		t.Errorf("output lists a slowdown from a commit that is not on the branch:\n%s", out)
+	}
+	for _, want := range []string{"Other inputs can be slower", "build up across kept experiments", "does not prove correctness", "declared benchmarks only"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output does not state %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestReportTellsNoSlowdownsFromNotRecorded(t *testing.T) {
+	rows := []results.Row{{Commit: "aaa", Score: 0.8, Status: "keep", Description: "win"}}
+
+	if out := reportOutput(t, rows, nil, true); !strings.Contains(out, "slowdowns: none significant in any single") {
+		t.Errorf("empty log, output:\n%s", out)
+	}
+	if out := reportOutput(t, rows, nil, false); !strings.Contains(out, "slowdowns: not recorded") {
+		t.Errorf("missing log, output:\n%s", out)
+	}
+}
+
+func TestReportCountsAFixInTheCumulativeButNotAsAWin(t *testing.T) {
+	out := reportOutput(t, []results.Row{
+		{Commit: "aaa", Score: 0.8, BestBenchDelta: -40, Status: "keep", Description: "fast add"},
+		{Commit: "bbb", Score: 1.1, BestBenchDelta: -1, Status: "fix", Description: "overflow at 2^62"},
+	}, nil, true)
+
+	// 0.8 * 1.1 = 0.88
+	if !strings.Contains(out, "cumulative speedup: 12.0%") {
+		t.Errorf("want the fix's cost in the cumulative figure:\n%s", out)
+	}
+	if !strings.Contains(out, "correctness fixes: 1") || !strings.Contains(out, "overflow at 2^62 (score: 1.1000)") {
+		t.Errorf("want the fix listed:\n%s", out)
+	}
+	wins := out[strings.Index(out, "largest wins"):]
+	if strings.Contains(wins, "overflow") {
+		t.Errorf("a fix is listed as a win:\n%s", out)
+	}
+}

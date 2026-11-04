@@ -234,3 +234,63 @@ func hasSubstring(ss []string, sub string) bool {
 	}
 	return false
 }
+
+// allocSet records allocs/op samples for several benchmarks.
+func allocSet(series map[string][]float64) *Set {
+	s := NewSet()
+	for name, vals := range series {
+		for _, v := range vals {
+			s.record(name, UnitAllocs, v)
+		}
+	}
+	return s
+}
+
+// One allocation-free benchmark once removed the allocs/op data of every other
+// benchmark in the run.
+func TestCompareHintsKeepsTheOtherBenchmarksWhenOneHasZeroAllocs(t *testing.T) {
+	base := allocSet(map[string][]float64{
+		"BenchmarkZero":     {0, 0, 0, 0, 0},
+		"BenchmarkRound":    {5, 5, 5, 5, 5},
+		"BenchmarkAppeared": {0, 0, 0, 0, 0},
+	})
+	cand := allocSet(map[string][]float64{
+		"BenchmarkZero":     {0, 0, 0, 0, 0},
+		"BenchmarkRound":    {2, 2, 2, 2, 2},
+		"BenchmarkAppeared": {3, 3, 3, 3, 3},
+	})
+
+	h := CompareHints(base, cand, UnitAllocs)
+
+	if len(h.Deltas) != 1 || h.Deltas[0].Name != "BenchmarkRound" || h.Deltas[0].CandCenter != 2 {
+		t.Errorf("Deltas = %+v, want only BenchmarkRound at 2", h.Deltas)
+	}
+	if len(h.Appeared) != 1 || h.Appeared[0].Name != "BenchmarkAppeared" || h.Appeared[0].CandCenter != 3 {
+		t.Errorf("Appeared = %+v, want only BenchmarkAppeared at 3", h.Appeared)
+	}
+	if len(h.Skipped) != 0 {
+		t.Errorf("Skipped = %v, want none: a benchmark that stays at zero has nothing to report", h.Skipped)
+	}
+}
+
+func TestCompareHintsSkipsABenchmarkMissingFromTheCandidate(t *testing.T) {
+	base := allocSet(map[string][]float64{"BenchmarkGone": {1, 1}, "BenchmarkKept": {4, 4}})
+	cand := allocSet(map[string][]float64{"BenchmarkKept": {4, 4}})
+
+	h := CompareHints(base, cand, UnitAllocs)
+
+	if len(h.Deltas) != 1 || h.Deltas[0].Name != "BenchmarkKept" {
+		t.Errorf("Deltas = %+v, want only BenchmarkKept", h.Deltas)
+	}
+	if len(h.Skipped) != 1 || !strings.Contains(h.Skipped[0], "BenchmarkGone") {
+		t.Errorf("Skipped = %v, want a reason that names BenchmarkGone", h.Skipped)
+	}
+}
+
+func TestCompareHintsIgnoresAMedianUnderOneAllocation(t *testing.T) {
+	base := allocSet(map[string][]float64{"BenchmarkNoise": {0, 0, 0, 0, 0, 1, 1, 1}})
+	cand := allocSet(map[string][]float64{"BenchmarkNoise": {0, 0, 0, 0, 1, 1, 1, 1}})
+	if h := CompareHints(base, cand, UnitAllocs); len(h.Appeared) != 0 {
+		t.Errorf("Appeared = %+v, want none for a median of 0.5", h.Appeared)
+	}
+}
