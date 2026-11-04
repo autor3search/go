@@ -3,6 +3,11 @@
 A real run of `autor3search-go` against a real, maintained, third-party Go
 library. Every number here was measured; nothing is illustrative.
 
+> **Update, 2026-11-03.** A later version of these changes is open upstream as
+> [dustin/go-humanize#181](https://github.com/dustin/go-humanize/pull/181). Its
+> first commit was 30% slower on NaN and ±Inf. A second commit, found by hand,
+> removed that slowdown.
+
 ## Setup
 
 | | |
@@ -255,6 +260,5 @@ crop, and the fixes held across two further libraries with different shapes.
 - Six experiments on one machine. A single run on a single library is a
   demonstration, not evidence about the tool's general yield.
 - macOS measurement is noisier than Linux; see the README's limitations.
-- These changes were not submitted upstream to `go-humanize`. They are
-  offered here as measured results, not as a patch anyone has reviewed for
-  merge.
+- These changes were not submitted upstream to `go-humanize` at the time of
+  this run. See the update at the top of this document.
