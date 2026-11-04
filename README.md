@@ -202,7 +202,7 @@ clear any pending stop and point the agent back at `program.md`.
 | Command | What it does |
 |---|---|
 | `init` | Scans the repo, discovers benchmarks via `go/ast`, and writes `.autor3search/config.yaml` + `program.md`. Refuses to overwrite an existing config without `-force`. |
-| `doctor` | Checks whether this machine can measure reliably (CPU frequency scaling, thermal throttling risk, disk space) and prints its findings. Informational — always exits 0. |
+| `doctor` | Checks whether this machine can measure reliably (CPU frequency scaling, thermal throttling risk, load average, disk space) and prints its findings. Informational — always exits 0. |
 | `baseline -tag <tag>` | Creates the run branch `autor3search-go/<tag>`, freezes every in-scope `_test.go` file, and pins a detached worktree at the baseline commit. Refuses a dirty tree and a reused tag. |
 | `profile` | Runs the declared benchmarks under Go's CPU and memory profilers and prints the top hot spots — real `pprof` data on where time and allocations actually go, rather than an agent guessing from reading source. Profiles only the package(s) that declare the benchmarks in scope (the go tool refuses `-cpuprofile`/`-memprofile` against `./...` once more than one package matches). When they're all in one package — the common case — writes `.autor3search/profiles/{cpu,mem}.out`, openable with `go tool pprof -http=: <file>`; when benchmarks span multiple packages, profiles each in turn and writes `.autor3search/profiles/<package>/{cpu,mem}.out`, with output grouped and labelled by package. |
 | `eval` | Runs one experiment: gates (scope, config integrity, restore, build, vet, test), measures the candidate against the pinned baseline worktree, scores it, appends a `results.tsv` row, exits `0`/`1`/`2`/`3` for KEEP/DISCARD/FAIL/CRASH, and on `KEEP` re-points the pinned worktree at the candidate's commit so the next `eval` measures against it (see [Scoring](#scoring)). |
@@ -419,7 +419,7 @@ directionally right rather than inert.
 
 `eval` prints `WARNING:` lines above its verdict (and a `warnings` array in
 `--json`) when the statistics behind a result do not support reading it at face
-value. They never change the decision. Two matter:
+value. They never change the decision. Three matter:
 
 - **Too few rounds for a confidence interval.** At 95% confidence the median's
   interval needs at least 6 observations per side; below that it is unbounded.
@@ -433,6 +433,10 @@ value. They never change the decision. Two matter:
   benchmarks is already there (`0.05/7 = 0.0071` against a floor of `0.0079`).
   `config.Validate`'s `count >= 4` floor cannot catch this: it does not know how
   many benchmarks a run will compare. The warning names the count to raise to.
+- **The machine was busy.** After it measures, `eval` reads the 1-minute load
+  average and warns if the average is above the CPU count. `compare` does the
+  same and prints the warning above its results. One reading can miss a short
+  burst early in a long measurement, and Windows has no load reading.
 
 `allocs/op` and `B/op` are measured and shown to the agent as hints, but never scored.
 
