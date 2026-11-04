@@ -15,6 +15,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -23,6 +24,7 @@ import (
 	"github.com/autor3search/go/internal/discover"
 	"github.com/autor3search/go/internal/freeze"
 	"github.com/autor3search/go/internal/gitx"
+	"github.com/autor3search/go/internal/loadavg"
 	"github.com/autor3search/go/internal/measure"
 	"github.com/autor3search/go/internal/results"
 	"github.com/autor3search/go/internal/runner"
@@ -60,6 +62,9 @@ type Options struct {
 	Log io.Writer
 	// Fix declares this commit a correctness fix. See verdict.Input.Fix.
 	Fix bool
+	// ReadLoad reads the machine's load after measuring. Nil means
+	// loadavg.Read. Tests set it, because the real load cannot be chosen.
+	ReadLoad func() (float64, error)
 }
 
 // Measurements carries every unit compared for one experiment.
@@ -83,6 +88,33 @@ type Measurements struct {
 	// AllocsAppeared lists the benchmarks that went from zero allocs/op to one
 	// or more, which have no percentage and so are not in Allocs.
 	AllocsAppeared []bench.Appeared
+	// Warnings say why these numbers can be weak. Eval also puts them in the
+	// verdict's Warnings.
+	Warnings []string
+}
+
+// busyWarning returns the warning for a load reading, or "" if none applies.
+// One reading after measuring covers about the last minute, because the load
+// average decays. So a short burst early in a long measurement can go unseen.
+func busyWarning(load float64, err error, numCPU int) string {
+	if err != nil || load <= float64(numCPU) {
+		return ""
+	}
+	return fmt.Sprintf("the machine was busy: the 1-minute load average was %.2f on %d CPUs after measuring, so these numbers can be noise", load, numCPU)
+}
+
+// loadWarnings reads the load and returns the warnings to report for it. It
+// never changes a verdict: a busy machine makes the numbers weak, not wrong.
+func loadWarnings(o Options) []string {
+	read := o.ReadLoad
+	if read == nil {
+		read = loadavg.Read
+	}
+	load, err := read()
+	if w := busyWarning(load, err, runtime.NumCPU()); w != "" {
+		return []string{w}
+	}
+	return nil
 }
 
 // Eval runs one experiment: gate correctness, measure, score. It returns a
@@ -325,6 +357,7 @@ func Eval(ctx context.Context, o Options) (verdict.Result, *Measurements, error)
 	if err != nil {
 		return verdict.Gate(verdict.StatusCrash, verdict.ReasonBuild, err.Error()), nil, nil
 	}
+	busy := loadWarnings(o)
 
 	// 7. Score. Time is the scored metric: any failure here (including a
 	// benchmark that vanished from the candidate) fails the whole call, per
@@ -362,6 +395,7 @@ func Eval(ctx context.Context, o Options) (verdict.Result, *Measurements, error)
 		result.Warnings = append(result.Warnings,
 			fmt.Sprintf("%s: allocs/op went from 0 to %.0f, which the percentage deltas cannot show", a.Name, a.CandCenter))
 	}
+	result.Warnings = append(result.Warnings, busy...)
 
 	// 8. Advance the measurement baseline on KEEP. Without this, every
 	// experiment after the first kept one is measured against the run's
@@ -376,7 +410,7 @@ func Eval(ctx context.Context, o Options) (verdict.Result, *Measurements, error)
 		}
 	}
 
-	return result, &Measurements{Time: timeDeltas, Allocs: allocs.Deltas, AllocsAppeared: allocs.Appeared}, nil
+	return result, &Measurements{Time: timeDeltas, Allocs: allocs.Deltas, AllocsAppeared: allocs.Appeared, Warnings: busy}, nil
 }
 
 // compareWorktreeName is the temporary checkout of the run's start for Compare.
@@ -413,12 +447,13 @@ func Compare(ctx context.Context, o Options) (*Measurements, error) {
 	if err != nil {
 		return nil, err
 	}
+	busy := loadWarnings(o)
 	timeDeltas, err := bench.CompareAll(baseSet, candSet, bench.UnitTime)
 	if err != nil {
 		return nil, err
 	}
 	allocs := bench.CompareHints(baseSet, candSet, bench.UnitAllocs)
-	return &Measurements{Time: timeDeltas, Allocs: allocs.Deltas, AllocsAppeared: allocs.Appeared}, nil
+	return &Measurements{Time: timeDeltas, Allocs: allocs.Deltas, AllocsAppeared: allocs.Appeared, Warnings: busy}, nil
 }
 
 // advanceMeasurementBaseline re-points the pinned baseline worktree at the

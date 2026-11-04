@@ -5,11 +5,14 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 
+	"github.com/autor3search/go/internal/config"
 	"github.com/autor3search/go/internal/gitx"
+	"github.com/autor3search/go/internal/loadavg"
 )
 
 // Severity indicates how bad a finding is.
@@ -44,7 +47,7 @@ func Check(dir string) []Finding {
 	findings = append(findings, checkGitRepo(dir))
 
 	// Check CPU count and GOMAXPROCS.
-	findings = append(findings, checkCPU())
+	findings = append(findings, checkCPU(runtime.NumCPU(), os.Getenv("GOMAXPROCS"), configuredGOMAXPROCS(dir)))
 
 	// Check load average (platform-specific).
 	findings = append(findings, checkLoadAverage())
@@ -149,25 +152,25 @@ func checkGitRepo(dir string) Finding {
 	}
 }
 
-// checkCPU reports the number of logical CPUs and warns if GOMAXPROCS is not pinned.
-func checkCPU() Finding {
-	numCPU := runtime.NumCPU()
+// checkCPU reports the number of logical CPUs and warns if GOMAXPROCS is not
+// pinned. configured is gomaxprocs from the config, where 0 means not set. It
+// wins over env, because the harness sets it last when it measures.
+func checkCPU(numCPU int, env string, configured int) Finding {
 	detail := fmt.Sprintf("%d logical CPU cores", numCPU)
 
-	// Check if GOMAXPROCS is pinned in environment.
-	// If GOMAXPROCS env var is set, it takes precedence at startup.
-	gomaxprocs := os.Getenv("GOMAXPROCS")
-	if gomaxprocs == "" {
-		if numCPU > 1 {
-			// Heterogeneous cores might cause variance; warn if GOMAXPROCS not pinned.
-			return Finding{
-				Name:     "gomaxprocs",
-				Detail:   detail + "; GOMAXPROCS not pinned (consider setting it in config for more consistent results on heterogeneous cores)",
-				Severity: SeverityWarn,
-			}
+	switch {
+	case configured > 0:
+		detail += fmt.Sprintf(" (gomaxprocs: %d in the config)", configured)
+	case env != "":
+		// If GOMAXPROCS env var is set, it takes precedence at startup.
+		detail += fmt.Sprintf(" (GOMAXPROCS=%s)", env)
+	case numCPU > 1:
+		// Heterogeneous cores might cause variance; warn if GOMAXPROCS not pinned.
+		return Finding{
+			Name:     "gomaxprocs",
+			Detail:   detail + "; GOMAXPROCS not pinned (consider setting it in config for more consistent results on heterogeneous cores)",
+			Severity: SeverityWarn,
 		}
-	} else {
-		detail += fmt.Sprintf(" (GOMAXPROCS=%s)", gomaxprocs)
 	}
 
 	return Finding{
@@ -175,6 +178,20 @@ func checkCPU() Finding {
 		Detail:   detail,
 		Severity: SeverityOK,
 	}
+}
+
+// configuredGOMAXPROCS returns gomaxprocs from the repository's config. It
+// returns 0 if there is no usable config, for example before `init`.
+func configuredGOMAXPROCS(dir string) int {
+	root, err := gitx.Root(dir)
+	if err != nil {
+		return 0
+	}
+	cfg, err := config.Load(filepath.Join(root, config.Path))
+	if err != nil {
+		return 0
+	}
+	return cfg.GOMAXPROCS
 }
 
 // linuxPaths holds the filesystem sources that the Linux-specific checks
@@ -203,6 +220,17 @@ var defaultLinuxPaths = linuxPaths{
 
 // checkLoadAverage checks the 1-minute load average where available.
 func checkLoadAverage() Finding {
+	if runtime.GOOS == "darwin" {
+		load, err := loadavg.Read()
+		if err != nil {
+			return Finding{
+				Name:     "load",
+				Detail:   fmt.Sprintf("1-minute load average: not checked (%v)", err),
+				Severity: SeverityNotApplicable,
+			}
+		}
+		return loadFinding(load, runtime.NumCPU())
+	}
 	return checkLoadAverageAt(defaultLinuxPaths.loadAvg)
 }
 
@@ -213,7 +241,7 @@ func checkLoadAverageAt(path string) Finding {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// File doesn't exist; on macOS or Windows, load average is not readily available.
+			// File doesn't exist; on Windows, load average is not readily available.
 			return Finding{
 				Name:     "load",
 				Detail:   fmt.Sprintf("1-minute load average: not checked (not available on %s)", runtime.GOOS),
@@ -248,18 +276,7 @@ func checkLoadAverageAt(path string) Finding {
 		}
 	}
 
-	numCPU := float64(runtime.NumCPU())
-	threshold := 0.5 * numCPU
-	severity := SeverityOK
-	if load > threshold {
-		severity = SeverityWarn
-	}
-
-	return Finding{
-		Name:     "load",
-		Detail:   fmt.Sprintf("1-minute load average: %.2f (threshold: %.2f)", load, threshold),
-		Severity: severity,
-	}
+	return loadFinding(load, runtime.NumCPU())
 }
 
 // checkDarwin returns darwin-specific findings.
@@ -350,4 +367,19 @@ func isVersionAtLeast(version, minVersion string) bool {
 
 	// If we've matched all minParts, and we have at least as many parts as minParts, it's OK.
 	return len(parts) >= len(minParts)
+}
+
+// loadFinding is the load check's result for one reading.
+func loadFinding(load float64, numCPU int) Finding {
+	threshold := 0.5 * float64(numCPU)
+	severity := SeverityOK
+	if load > threshold {
+		severity = SeverityWarn
+	}
+
+	return Finding{
+		Name:     "load",
+		Detail:   fmt.Sprintf("1-minute load average: %.2f (threshold: %.2f)", load, threshold),
+		Severity: severity,
+	}
 }

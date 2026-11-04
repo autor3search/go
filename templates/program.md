@@ -162,7 +162,7 @@ guard and by how much.
 `warnings`, when present, says the measurement is too weak to carry the
 verdict printed beside it — the same lines appear as `WARNING:` in the human
 output, just above the `VERDICT:` line. They never change the decision; they
-tell you not to over-read it. Three you may see:
+tell you not to over-read it. Four you may see:
 
 - **too few rounds for a confidence interval** — the numbers are still the
   measured medians, but the interval around them is unbounded. Raise `count`.
@@ -174,6 +174,10 @@ tell you not to over-read it. Three you may see:
   on experiments that cannot be banked.
 - **allocs/op went from 0 to N** — a benchmark that made no allocations now makes
   some. A percentage cannot show this change, so check it yourself.
+- **the machine was busy** — the 1-minute load average was above the CPU count
+  after measuring. The verdict still applies, but it can be noise. Wait for the
+  load to fall before the next experiment. At the end of the run, use `compare`
+  on a quiet machine to check the total result.
 
 **What `base_ns` means changes as the run progresses.** It is NOT always the
 commit `baseline` recorded — it is whatever the harness's measurement

@@ -83,3 +83,10 @@ func TestProgramMDTellsTheAgentToApplyTheVerdictBeforeStopping(t *testing.T) {
 		t.Error("ProgramMD() does not tell the agent to stop starting experiments once a stop is pending")
 	}
 }
+
+// An agent that reads this warning must know that the verdict can be noise.
+func TestProgramMDExplainsTheBusyWarning(t *testing.T) {
+	if !contains(string(ProgramMD()), "**the machine was busy**") {
+		t.Error("ProgramMD() does not explain the busy warning")
+	}
+}

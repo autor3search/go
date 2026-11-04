@@ -124,6 +124,7 @@ func printComparison(meas *pipeline.Measurements) int {
 	sort.SliceStable(slower, func(i, j int) bool { return slower[i].PctChange > slower[j].PctChange })
 	sort.SliceStable(faster, func(i, j int) bool { return faster[i].PctChange < faster[j].PctChange })
 
+	printWarnings(meas.Warnings)
 	fmt.Printf("\nslower: %d of %d benchmarks", len(slower), len(meas.Time))
 	if len(slower) > 0 {
 		fmt.Print(" (* passes the correction for the number of benchmarks; the others can be noise)")

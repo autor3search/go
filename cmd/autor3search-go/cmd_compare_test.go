@@ -57,6 +57,19 @@ func TestPrintComparisonListsSlowdownsFirstAndMarksTheStrongOnes(t *testing.T) {
 	}
 }
 
+func TestPrintComparisonPrintsWarningsBeforeTheResults(t *testing.T) {
+	meas := &pipeline.Measurements{
+		Time:     []bench.Delta{{Name: "BenchmarkA", Ratio: 0.5, PctChange: -50, P: 0.001, Alpha: 0.05, Significant: true}},
+		Warnings: []string{"the machine was busy"},
+	}
+	out := captureStdout(t, func() { printComparison(meas) })
+	w := strings.Index(out, "WARNING: the machine was busy")
+	r := strings.Index(out, "faster:")
+	if w < 0 || r < 0 || w > r {
+		t.Errorf("want the warning before the results, got:\n%s", out)
+	}
+}
+
 func TestCompareRefusesACountTooSmallToCompare(t *testing.T) {
 	if code := runCompare([]string{"-count", "1"}); code != exitUsage {
 		t.Errorf("runCompare = %d, want %d", code, exitUsage)
