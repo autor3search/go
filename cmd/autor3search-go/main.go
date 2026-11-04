@@ -35,13 +35,14 @@ var commands = map[string]command{
 	"status":   {"show where the run is: branch, worktree, experiments, stop state", runStatus},
 	"stop":     {"ask the agent to end the run after the current experiment", runStop},
 	"report":   {"summarize results.tsv", runReport},
+	"compare":  {"measure the final code against the commit the run started from", runCompare},
 	"version":  {"print which build of the harness this is", runVersion},
 }
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "autor3search-go — autonomous Go performance optimization harness")
 	fmt.Fprintln(os.Stderr, "\nusage: autor3search-go <command> [flags]\n\ncommands:")
-	for _, name := range []string{"init", "doctor", "baseline", "profile", "eval", "status", "stop", "report", "version"} {
+	for _, name := range []string{"init", "doctor", "baseline", "profile", "eval", "status", "stop", "report", "compare", "version"} {
 		fmt.Fprintf(os.Stderr, "  %-9s %s\n", name, commands[name].summary)
 	}
 }
