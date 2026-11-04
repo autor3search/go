@@ -348,3 +348,32 @@ func TestBaselineMissingConfigAdvisesInit(t *testing.T) {
 		t.Errorf("an absent config should point at init:\n%s", out)
 	}
 }
+
+// Moving results.tsv away is what baseline's refusal tells the user to do, so
+// the slowdown log must have its own protection.
+func TestBaselineRefusesToEraseTheSlowdownLog(t *testing.T) {
+	dir := copyDemoRepo(t)
+	mustInit(t, dir)
+	if code := runBaseline([]string{"-C", dir, "-tag", "sep4"}); code != exitOK {
+		t.Fatalf("runBaseline = %d, want %d", code, exitOK)
+	}
+	path := filepath.Join(dir, results.SlowdownsPath)
+	row := results.Slowdown{Commit: "abc", Benchmark: "BenchmarkX", Pct: 3, P: 0.01}
+	if err := results.AppendSlowdowns(path, []results.Slowdown{row}); err != nil {
+		t.Fatal(err)
+	}
+
+	if code := runBaseline([]string{"-C", dir, "-tag", "sep5"}); code == exitOK {
+		t.Fatal("baseline erased a slowdown log that holds rows, want refusal")
+	}
+	if rows, ok, err := results.LoadSlowdowns(path); err != nil || !ok || len(rows) != 1 {
+		t.Fatalf("rows=%v ok=%v err=%v, want the row kept", rows, ok, err)
+	}
+
+	if code := runBaseline([]string{"-C", dir, "-tag", "sep6", "-force"}); code != exitOK {
+		t.Fatalf("runBaseline -force = %d, want %d", code, exitOK)
+	}
+	if rows, ok, err := results.LoadSlowdowns(path); err != nil || !ok || len(rows) != 0 {
+		t.Fatalf("after -force: rows=%v ok=%v err=%v, want an empty log", rows, ok, err)
+	}
+}

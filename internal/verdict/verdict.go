@@ -25,6 +25,7 @@ type Reason string
 // Reasons, grouped by the stage that produces them.
 const (
 	ReasonImproved         Reason = "improved"
+	ReasonCorrectnessFix   Reason = "correctness_fix"
 	ReasonNoImprovement    Reason = "no_significant_improvement"
 	ReasonBelowMinEffect   Reason = "improvement_below_min_effect"
 	ReasonGuardRegression  Reason = "guard_regression"
@@ -51,6 +52,9 @@ type Input struct {
 	// The zero value requires only Score < 1, matching the pre-Bonferroni
 	// rule; internal/config.Default sets this to 1.0 for real runs.
 	MinEffectPct float64
+	// Fix says the human or agent declared this commit a correctness fix. See
+	// Decide.
+	Fix bool
 }
 
 // Result is the harness's answer for one experiment.
@@ -95,6 +99,9 @@ func Gate(status Status, reason Reason, message string) Result {
 //     spurious "significant" improvement even when nothing changed);
 //     dividing alpha by k is the standard correction.
 //
+// A declared correctness fix (Input.Fix) skips rule 2 only. It still had to
+// pass every correctness gate to get here, and rule 1 still applies.
+//
 // A change that clears 2b but misses 2a discards with
 // ReasonBelowMinEffect rather than ReasonNoImprovement: it measurably
 // worked, it was just too small to bank.
@@ -135,6 +142,20 @@ func Decide(in Input) Result {
 			Message:     fmt.Sprintf("regression guard tripped (limit %+.1f%%): %s", in.MaxRegressPct, sb.String()),
 			Regressions: regressions,
 			Warnings:    warnings,
+		}
+	}
+
+	// A correctness fix needs no speedup, but rule 1 above still binds it: the
+	// flag is self-declared, so skipping the guard would let any slowdown in,
+	// and the next commit could undo that slowdown and count as a win. Its score
+	// stays in the cumulative figure, and `report` lists it apart from the wins.
+	if in.Fix {
+		return Result{
+			Status:   StatusKeep,
+			Reason:   ReasonCorrectnessFix,
+			Score:    in.Score,
+			Message:  fmt.Sprintf("correctness fix kept, score %.4f (%+.2f%%)", in.Score, (in.Score-1)*100),
+			Warnings: warnings,
 		}
 	}
 

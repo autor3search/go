@@ -23,8 +23,9 @@ import (
 // a fresh run branch, a frozen golden copy of every in-scope test file, a
 // pinned detached worktree at the baseline commit, and a baseline record —
 // every one of which lives under state.StateDir, OUTSIDE the repository
-// being optimized. Only results.tsv, a human-readable log rather than part
-// of the metric, stays in the (gitignored) repository.
+// being optimized. Only results.tsv and .autor3search/slowdowns.tsv,
+// human-readable logs rather than part of the metric, stay in the (gitignored)
+// repository.
 //
 // A single working directory supports one run at a time: the git checkout
 // and results.tsv are both repo-scoped, not tag-scoped, so two concurrent
@@ -63,7 +64,7 @@ func runBaseline(args []string) int {
 	}
 
 	// Resolve the out-of-tree state directory immediately: every artifact
-	// below except results.tsv is written there, never into root.
+	// below except the two logs is written there, never into root.
 	stateDir, err := state.StateDir(root, *tag)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "autor3search-go baseline: %v\n", err)
@@ -150,6 +151,21 @@ func runBaseline(args []string) int {
 	if len(existingRows) > 0 && !*force {
 		fmt.Fprintf(os.Stderr, "autor3search-go baseline: %s already holds %d experiment row(s) from a "+
 			"previous run; a fresh baseline would erase that record with no way to get it back.\n", resultsPath, len(existingRows))
+		fmt.Fprintln(os.Stderr, "Move or delete it if you no longer need it, or re-run with -force to discard it.")
+		return exitUsage
+	}
+
+	// The same protection for the slowdown log, for when results.tsv was moved
+	// away to archive it but this file, which pairs with it, was not.
+	slowdownsPath := filepath.Join(root, results.SlowdownsPath)
+	oldSlowdowns, _, err := results.LoadSlowdowns(slowdownsPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "autor3search-go baseline: %v\n", err)
+		return exitUsage
+	}
+	if len(oldSlowdowns) > 0 && !*force {
+		fmt.Fprintf(os.Stderr, "autor3search-go baseline: %s already holds %d slowdown row(s) from a "+
+			"previous run; a fresh baseline would erase that record with no way to get it back.\n", slowdownsPath, len(oldSlowdowns))
 		fmt.Fprintln(os.Stderr, "Move or delete it if you no longer need it, or re-run with -force to discard it.")
 		return exitUsage
 	}
@@ -245,6 +261,10 @@ func finishBaseline(root, stateDir, configPath, resultsPath, branch, tag string,
 	_ = gitx.RemoveWorktree(root, worktree)
 	if err := gitx.AddWorktree(root, worktree, commit); err != nil {
 		return "", 0, fmt.Errorf("pin baseline worktree: %w", err)
+	}
+
+	if err := results.ResetSlowdowns(filepath.Join(root, results.SlowdownsPath)); err != nil {
+		return "", 0, fmt.Errorf("init %s: %w", results.SlowdownsPath, err)
 	}
 
 	// Start this run's log fresh: a baseline is a new fixed reference point,

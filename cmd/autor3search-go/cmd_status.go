@@ -99,9 +99,9 @@ func printExperiments(ref runRef) {
 	for _, r := range rows {
 		counts[r.Status]++
 	}
-	fmt.Printf("%-14s %d run  (%d keep, %d discard, %d fail, %d crash)  — next is #%d\n",
+	fmt.Printf("%-14s %d run  (%d keep, %d fix, %d discard, %d fail, %d crash)  — next is #%d\n",
 		"experiments", len(rows),
-		counts["keep"], counts["discard"], counts["fail"], counts["crash"],
+		counts["keep"], counts["fix"], counts["discard"], counts["fail"], counts["crash"],
 		len(rows)+1)
 }
 

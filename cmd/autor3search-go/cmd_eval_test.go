@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -665,4 +666,196 @@ func gateLineFor(t *testing.T, out, label string) string {
 	}
 	t.Fatalf("no line for gate %q in:\n%s", label, out)
 	return ""
+}
+
+// The repo is a real run with a new commit, so nothing but the missing -desc can
+// refuse this eval. The failure must arrive before any measuring starts.
+func TestEvalFixRequiresADescription(t *testing.T) {
+	dir := copyDemoRepo(t)
+	mustInit(t, dir)
+	if code := runBaseline([]string{"-C", dir, "-tag", "fixrun"}); code != exitOK {
+		t.Fatalf("runBaseline = %d", code)
+	}
+	srcPath := filepath.Join(dir, "wordcount.go")
+	src, err := os.ReadFile(srcPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(srcPath, append(src, []byte("\n// a new commit\n")...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "add", "-A")
+	runGit(t, dir, "commit", "-q", "-m", "a new commit")
+
+	for _, args := range [][]string{{"-fix"}, {"-fix", "-desc", "   "}} {
+		if code := runEval(append([]string{"-C", dir, "-no-log"}, args...)); code != exitUsage {
+			t.Errorf("runEval %v = %d, want %d", args, code, exitUsage)
+		}
+	}
+	rows, err := results.Load(filepath.Join(dir, results.Path))
+	if err != nil || len(rows) != 0 {
+		t.Errorf("rows = %+v err = %v, want no experiment recorded", rows, err)
+	}
+}
+
+func TestSlowdownsInListsOnlySignificantSlowdowns(t *testing.T) {
+	got := slowdownsIn("abc", []bench.Delta{
+		{Name: "BenchmarkSlower", PctChange: 2, P: 0.01, Significant: true},
+		{Name: "BenchmarkNoise", PctChange: 9, P: 0.4},
+		{Name: "BenchmarkFaster", PctChange: -30, P: 0.001, Significant: true},
+	})
+	if len(got) != 1 || got[0].Benchmark != "BenchmarkSlower" || got[0].Commit != "abc" {
+		t.Fatalf("got %+v, want only BenchmarkSlower: under the guard's limit, it still counts", got)
+	}
+}
+
+func TestRecordSlowdownsLogsOnlyAKeptCommit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "slowdowns.tsv")
+	if err := results.ResetSlowdowns(path); err != nil {
+		t.Fatal(err)
+	}
+	deltas := []bench.Delta{{Name: "BenchmarkSlower", PctChange: 2, P: 0.01, Significant: true}}
+
+	recordSlowdowns(path, verdict.Result{Status: verdict.StatusDiscard}, "dropped", deltas)
+	recordSlowdowns(path, verdict.Result{Status: verdict.StatusKeep}, "kept", deltas)
+
+	rows, _, err := results.LoadSlowdowns(path)
+	if err != nil || len(rows) != 1 || rows[0].Commit != "kept" {
+		t.Fatalf("rows=%+v err=%v, want only the kept commit", rows, err)
+	}
+}
+
+// The KEEP is already applied when the log is written, so a failed write must
+// not stop the verdict from reaching the agent.
+func TestRecordSlowdownsTurnsAWriteFailureIntoAWarning(t *testing.T) {
+	path := t.TempDir() // a directory cannot be opened for writing
+	deltas := []bench.Delta{{Name: "BenchmarkSlower", PctChange: 2, P: 0.01, Significant: true}}
+
+	res := recordSlowdowns(path, verdict.Result{Status: verdict.StatusKeep}, "kept", deltas)
+
+	if res.Status != verdict.StatusKeep || len(res.Warnings) != 1 {
+		t.Fatalf("got %+v, want KEEP with one warning", res)
+	}
+}
+
+func TestAllocsDeltaForMarksZeroToSomeAsInfinite(t *testing.T) {
+	appeared := []bench.Appeared{{Name: "BenchmarkNew", CandCenter: 3}}
+	if got := allocsDeltaFor(nil, appeared, "BenchmarkNew"); !math.IsInf(got, 1) {
+		t.Errorf("appeared: got %v, want +Inf", got)
+	}
+	if got := allocsDeltaFor(nil, appeared, "BenchmarkOther"); got != 0 {
+		t.Errorf("no data: got %v, want 0", got)
+	}
+
+	path := filepath.Join(t.TempDir(), "results.tsv")
+	if err := results.Append(path, results.Row{Commit: "a", Score: 0.9, AllocsDelta: math.Inf(1), Status: "keep", Description: "d"}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := results.Load(path)
+	if err != nil || !math.IsInf(rows[0].AllocsDelta, 1) {
+		t.Fatalf("rows=%+v err=%v, want +Inf to survive the log", rows, err)
+	}
+}
+
+func TestEvalFixRefusesWhenTheFixIsNotCommitted(t *testing.T) {
+	dir := copyDemoRepo(t)
+	mustInit(t, dir)
+	if code := runBaseline([]string{"-C", dir, "-tag", "fixrun"}); code != exitOK {
+		t.Fatalf("runBaseline = %d", code)
+	}
+
+	// HEAD is the measured commit, so there is nothing to keep.
+	if code := runEval([]string{"-C", dir, "-no-log", "-fix", "-desc", "x"}); code != exitUsage {
+		t.Errorf("no new commit: runEval = %d, want %d", code, exitUsage)
+	}
+
+	appendToWordcount := filepath.Join(dir, "wordcount.go")
+	src, err := os.ReadFile(appendToWordcount)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(appendToWordcount, append(src, []byte("\n// uncommitted\n")...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code := runEval([]string{"-C", dir, "-no-log", "-fix", "-desc", "x"}); code != exitUsage {
+		t.Errorf("dirty tree: runEval = %d, want %d", code, exitUsage)
+	}
+}
+
+// A real -fix cycle: a fix with no speedup is kept and logged as a fix, and a
+// fix that trips the guard is discarded like any other commit.
+func TestEvalFixKeepsWithoutASpeedupButNotPastTheGuard(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs a real build/vet/test/bench cycle; skipped in -short")
+	}
+	dir := copyDemoRepo(t)
+	mustInit(t, dir)
+	configPath := filepath.Join(dir, config.Path)
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Count = 8
+	cfg.Benchtime = "50ms"
+	if err := os.WriteFile(configPath, renderConfig(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "add", "-A")
+	runGit(t, dir, "commit", "-q", "-m", "shrink count/benchtime for a fast test")
+	if code := runBaseline([]string{"-C", dir, "-tag", "fixrun"}); code != exitOK {
+		t.Fatalf("runBaseline = %d", code)
+	}
+	srcPath := filepath.Join(dir, "wordcount.go")
+	src, err := os.ReadFile(srcPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Timing does not change, so only -fix can keep this commit.
+	if err := os.WriteFile(srcPath, append(src, []byte("\n// a fix with no timing effect\n")...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "add", "-A")
+	runGit(t, dir, "commit", "-q", "-m", "fix with no speedup")
+	var code int
+	out := captureStdout(t, func() {
+		code = runEval([]string{"-C", dir, "-no-log", "-fix", "-desc", "fix a wrong count"})
+	})
+	if code != exitOK {
+		t.Fatalf("runEval -fix = %d, want %d\n%s", code, exitOK, out)
+	}
+
+	// Run the function many extra times, so this commit is far over the guard.
+	text := strings.Replace(string(src), "func CountWords(s string) map[string]int {",
+		"func CountWords(s string) map[string]int {\n\tfor i := 0; i < 40; i++ {\n\t\tcountWords(s)\n\t}\n\treturn countWords(s)\n}\n\nfunc countWords(s string) map[string]int {", 1)
+	if err := os.WriteFile(srcPath, []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, dir, "add", "-A")
+	runGit(t, dir, "commit", "-q", "-m", "claims to be a fix, but is much slower")
+	out = captureStdout(t, func() {
+		code = runEval([]string{"-C", dir, "-no-log", "-fix", "-desc", "not really a fix"})
+	})
+	if code != 1 {
+		t.Fatalf("runEval -fix over the guard = %d, want 1 (DISCARD)\n%s", code, out)
+	}
+
+	rows, err := results.Load(filepath.Join(dir, results.Path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 || rows[0].Status != "fix" || rows[1].Status != "discard" {
+		t.Fatalf("rows = %+v, want one fix, then one discard", rows)
+	}
+	if status := runGit(t, dir, "status", "--porcelain"); strings.Contains(status, "slowdowns.tsv") {
+		t.Errorf("the slowdown log is not ignored by git:\n%s", status)
+	}
+	report := captureStdout(t, func() {
+		if code := runReport([]string{"-C", dir}); code != exitOK {
+			t.Fatalf("runReport = %d", code)
+		}
+	})
+	if !strings.Contains(report, "fix a wrong count") || strings.Contains(report, "not really a fix") {
+		t.Errorf("report should list only the kept fix:\n%s", report)
+	}
 }

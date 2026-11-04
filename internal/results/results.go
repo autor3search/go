@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -42,7 +43,7 @@ type Row struct {
 	BestBenchDelta float64
 	// AllocsDelta is the change in allocs/op for the primary benchmark.
 	AllocsDelta float64
-	// Status is keep, discard, fail or crash.
+	// Status is keep, fix, discard, fail or crash.
 	Status string
 	// Description is a short human summary of what was tried.
 	Description string
@@ -167,4 +168,90 @@ func Load(path string) ([]Row, error) {
 		return nil, err
 	}
 	return rows, nil
+}
+
+// SlowdownsPath is the slowdown log relative to the repository root. It is
+// separate from results.tsv so that the six columns of that file stay stable.
+const SlowdownsPath = ".autor3search/slowdowns.tsv"
+
+// SlowdownsHeader is the first line of the slowdown log.
+const SlowdownsHeader = "commit\tbenchmark\tpct\tp"
+
+// Slowdown is one benchmark that got significantly slower, at the raw alpha,
+// in an experiment that stayed on the branch.
+type Slowdown struct {
+	Commit    string
+	Benchmark string
+	Pct       float64
+	P         float64
+}
+
+// ResetSlowdowns starts an empty slowdown log for a new run. A log that exists
+// and has no rows means "none recorded", which a missing log does not: a run
+// from an older harness has no log at all.
+func ResetSlowdowns(path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(SlowdownsHeader+"\n"), 0o644)
+}
+
+// AppendSlowdowns adds rows to the log that `baseline` created. A missing log
+// stays missing and takes no rows: the run did not record from its start, and a
+// log created now would look complete when the earlier experiments are absent.
+func AppendSlowdowns(path string, rows []Slowdown) (err error) {
+	if len(rows) == 0 {
+		return nil
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("open %s: %w", path, err)
+	}
+	defer func() {
+		if cerr := f.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("close %s: %w", path, cerr)
+		}
+	}()
+	for _, r := range rows {
+		if _, err := fmt.Fprintf(f, "%s\t%s\t%.2f\t%.4f\n", clean(r.Commit), clean(r.Benchmark), r.Pct, r.P); err != nil {
+			return err
+		}
+	}
+	return f.Sync()
+}
+
+// LoadSlowdowns reads every row. ok is false when the log does not exist. Like
+// Load, it fails on a malformed line instead of skipping it: a report that
+// drops a slowdown would be worse than no report.
+func LoadSlowdowns(path string) (rows []Slowdown, ok bool, err error) {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("read %s: %w", path, err)
+	}
+	for i, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSuffix(line, "\r")
+		if line == "" || line == SlowdownsHeader {
+			continue
+		}
+		parts := strings.Split(line, "\t")
+		if len(parts) != 4 {
+			return nil, false, fmt.Errorf("%s:%d: got %d fields, want 4", path, i+1, len(parts))
+		}
+		pct, err := strconv.ParseFloat(parts[2], 64)
+		if err != nil {
+			return nil, false, fmt.Errorf("%s:%d: pct: %w", path, i+1, err)
+		}
+		p, err := strconv.ParseFloat(parts[3], 64)
+		if err != nil {
+			return nil, false, fmt.Errorf("%s:%d: p: %w", path, i+1, err)
+		}
+		rows = append(rows, Slowdown{Commit: parts[0], Benchmark: parts[1], Pct: pct, P: p})
+	}
+	return rows, true, nil
 }

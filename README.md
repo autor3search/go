@@ -112,9 +112,10 @@ the agent cannot reach it.
 
 That last row matters: the agent edits the repository, so anything the score depends
 on that *lived* there would be silently writable by the very agent it is meant to
-constrain. The only harness output that stays inside your repo is `results.tsv` (a
-human-readable log, not part of the metric) and `run.log` (subprocess transcripts) —
-both gitignored by `init`.
+constrain. The only harness output that stays inside your repo is `results.tsv` and
+`.autor3search/slowdowns.tsv` (human-readable logs, not part of the metric) and
+`run.log` (subprocess transcripts) — all gitignored by `init`. An agent can edit
+those logs, so read them as a record, not as proof.
 
 ## Quick start
 
@@ -207,7 +208,7 @@ clear any pending stop and point the agent back at `program.md`.
 | `eval` | Runs one experiment: gates (scope, config integrity, restore, build, vet, test), measures the candidate against the pinned baseline worktree, scores it, appends a `results.tsv` row, exits `0`/`1`/`2`/`3` for KEEP/DISCARD/FAIL/CRASH, and on `KEEP` re-points the pinned worktree at the candidate's commit so the next `eval` measures against it (see [Scoring](#scoring)). |
 | `status` | Prints where a run is: run branch and whether it is checked out, the frozen baseline commit and the advancing measurement commit, the pinned worktree, how many experiments have run and with what verdicts, whether an `eval` is in flight, and whether a stop is pending. Read-only. Accepts `-tag <tag>` so it works from any branch. |
 | `stop` | Asks the agent to end the run after the experiment it is running: writes a request `eval` reports back as `stop_requested`. `-clear` cancels a pending request; `-force` additionally signals the running `eval` to abandon the current experiment and reports what state that leaves the repository in. Accepts `-tag <tag>`. |
-| `report` | Summarizes `results.tsv`: counts by status, the cumulative speedup as the product of every kept experiment's score, and the largest individual wins. |
+| `report` | Summarizes `results.tsv`: counts by status, every significant slowdown in the kept experiments, the cumulative speedup as the product of every kept experiment's score, the correctness fixes, the largest individual wins, and the limits of the run. |
 | `version` | Prints which build of the harness is running: the module version for an installed binary, or the commit for one built from a checkout (marked `dirty` when the tree had uncommitted changes). A `results.tsv` row is only as reproducible as the binary that produced it. |
 
 Every command accepts `-C <dir>` to run against a repository other than the current
@@ -362,7 +363,7 @@ An agent optimizing your code can "win" by cheating. Each route is closed:
 | Replace a frozen `_test.go` with a symlink to a file outside the repo | `Snapshot` refuses to freeze a symlinked test file, and `Restore` refuses to write through one that appears later — both fail loudly instead of writing through the link |
 | Edit files outside the agreed area | `scope` violations fail before anything is even built |
 | Bank measurement noise as a win | a Mann-Whitney test must clear `p < 0.05`; noise is `DISCARD` |
-| Speed up A by wrecking B | any significant regression over 5 % rejects the change outright |
+| Speed up A by wrecking B | any significant regression over 5 % rejects the change outright, and `eval -fix` does not skip this |
 | Swap or edit a dependency (`go.mod`/`go.sum`) | rejected outright regardless of `scope` — a dependency change is a human decision, not an autonomous one, and would change what is being measured rather than how fast it runs |
 | Loosen the rules mid-run (raise `max_regress_pct`, narrow `scope`, drop a benchmark) | `.autor3search/config.yaml` is hashed at baseline; any change to it fails the run with a config-hash mismatch |
 | Compare against a stale baseline | the measurement baseline is **re-measured every run**, interleaved with the candidate |
@@ -471,6 +472,18 @@ Stated plainly, because performance tools that oversell are worse than useless:
   p=0.004, while an unrelated build was running. `min_effect_pct` is the knob for
   this: raise it on a noisy machine, since it costs you only wins smaller than
   the noise you cannot measure anyway.
+- **A `KEEP` does not prove correctness.** It proves only that the frozen tests
+  pass. A run on a real library kept a fast path that gave a wrong answer at a
+  boundary value, and the tests did not cover it. Compare the results with the
+  old code before you merge. `eval -fix -desc "..."` keeps a commit that fixes
+  such a result. It removes only rules 1 and 2 of [Scoring](#scoring): the gates
+  and the regression guard still apply, and `report` lists it apart from the wins.
+  The flag is self-declared, so check each fix in the report. A correct fix that
+  trips the guard is a decision for you, and the agent stops to ask.
+- **Results cover only the declared benchmarks.** Other inputs can get slower,
+  and the guard passes any slowdown under `max_regress_pct`. `report` lists every
+  significant slowdown it measured in a single kept experiment. It cannot list what
+  no benchmark measured, or small slowdowns that build up across experiments.
 - **Laptops are noisy.** macOS P/E core scheduling makes numbers jump. Interleaving and
   `-count` mitigate it and `doctor` warns you, but a quiet Linux box gives cleaner
   results.

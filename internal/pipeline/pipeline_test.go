@@ -729,6 +729,92 @@ func BenchmarkNoAlloc(b *testing.B) {
 	}
 }
 
+// One allocation-free benchmark once removed the allocs/op data of every other
+// benchmark in the run, so results.tsv showed 0.00 on every row.
+func TestEvalKeepsAllocsDataWhenOneBenchmarkHasNoAllocs(t *testing.T) {
+	if testing.Short() {
+		t.Skip("measures real benchmarks; skipped in -short")
+	}
+	const src = `package demo
+
+import "testing"
+
+var sink []byte
+
+func BenchmarkNoAlloc(b *testing.B) {
+	sum := 0
+	for i := 0; i < b.N; i++ {
+		sum += i
+	}
+	if sum < 0 {
+		b.Fatal("impossible")
+	}
+}
+
+func BenchmarkAllocs(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		sink = make([]byte, 64+i%2)
+	}
+}
+`
+	env := setupRunWithBenchmarks(t, []string{"BenchmarkNoAlloc", "BenchmarkAllocs"}, map[string]string{
+		"mixed_test.go": src,
+	})
+	_, meas, err := Eval(context.Background(), env.Options())
+	if err != nil {
+		t.Fatalf("Eval: %v", err)
+	}
+	if meas == nil {
+		t.Fatalf("Measurements = nil\nlog:\n%s", env.Log)
+	}
+	if len(meas.Allocs) != 1 || !strings.HasPrefix(meas.Allocs[0].Name, "BenchmarkAllocs") {
+		t.Errorf("Measurements.Allocs = %+v, want the data for BenchmarkAllocs only", meas.Allocs)
+	}
+}
+
+// A benchmark that starts to allocate has no percentage, so the warning and
+// AllocsAppeared are the only things that say so.
+func TestEvalWarnsWhenABenchmarkStartsToAllocate(t *testing.T) {
+	if testing.Short() {
+		t.Skip("measures real benchmarks; skipped in -short")
+	}
+	const benchSrc = `package demo
+
+import "testing"
+
+var sink []byte
+
+func BenchmarkMake(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		sink = Make()
+	}
+}
+`
+	env := setupRunWithBenchmarks(t, []string{"BenchmarkMake"}, map[string]string{
+		"make_test.go": benchSrc,
+		"make.go":      "package demo\n\n// Make returns no buffer.\nfunc Make() []byte { return nil }\n",
+	})
+	source := "package demo\n\n// Make returns a new buffer.\nfunc Make() []byte { return make([]byte, 64) }\n"
+	if err := os.WriteFile(filepath.Join(env.Root, "make.go"), []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	commit(t, env.Root, "start to allocate")
+
+	res, meas, err := Eval(context.Background(), env.Options())
+	if err != nil {
+		t.Fatalf("Eval: %v", err)
+	}
+	if meas == nil {
+		t.Fatalf("Measurements = nil, status %s (%s)\nlog:\n%s", res.Status, res.Message, env.Log)
+	}
+	if len(meas.AllocsAppeared) != 1 || !strings.HasPrefix(meas.AllocsAppeared[0].Name, "BenchmarkMake") {
+		t.Errorf("AllocsAppeared = %+v, want BenchmarkMake", meas.AllocsAppeared)
+	}
+	if !strings.Contains(strings.Join(res.Warnings, "\n"), "allocs/op went from 0 to 1") {
+		t.Errorf("Warnings = %q, want the 0-to-1 change named", res.Warnings)
+	}
+}
+
 // TestEvalDiscardsNoOpAfterPriorImprovementKept is the regression test for
 // the advancing-measurement-baseline fix: it is the test that would have
 // caught the original flaw.

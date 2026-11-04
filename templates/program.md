@@ -69,7 +69,7 @@ exactly these:
 
 | Exit code | Meaning | Verdict status |
 |---|---|---|
-| `0` | KEEP  — the change is a real, safe improvement | `KEEP` |
+| `0` | KEEP  — the change passed the gates and measured faster on the declared benchmarks, or `-fix` declared it a correctness fix that stayed under the guard | `KEEP` |
 | `1` | DISCARD — no significant improvement, or it lost the coin flip against noise | `DISCARD` |
 | `2` | FAIL — a gate rejected the change: scope violation, a new/edited test file, `go vet` failure, or a test failure | `FAIL` |
 | `3` | CRASH — the build failed outright or a phase timed out | `CRASH` |
@@ -89,6 +89,30 @@ the right direction — do not spend a night chasing sub-1% wins, the harness wi
 not bank them. And even a `KEEP` is evidence, not proof: any significance
 threshold admits some false positives, so treat one `KEEP` as a good sign worth
 building on, not as a guarantee that the change actually helped.
+
+**A `KEEP` does not prove that the code is correct.** It proves only that the
+frozen tests pass. They can miss a wrong answer that a new fast path adds, for
+example an overflow at a boundary value. When you add a fast path, compare its
+results with the old code at the boundaries of its range before you commit.
+
+**Fixing a wrong result in a kept change.** If you find that a kept change gives
+a wrong result, fix it in one commit that does nothing else, and run:
+
+```
+autor3search-go eval --json -fix -desc "<the wrong result this fixes>"
+```
+
+`-fix` removes only the need for a speedup. The gates and the regression guard
+still apply. The commit must exist and the tree must be clean, or `eval` refuses.
+If the status is `KEEP`, the reason is `correctness_fix`. The row in `results.tsv`
+has the status `fix`, its score stays in the cumulative figure, and `report` lists
+it apart from the wins. Use `-fix` only for a wrong result. Never use it to keep a
+change that the harness discarded for speed.
+
+If a `-fix` eval returns anything other than `KEEP`, run `git reset --hard HEAD~1`
+and correct the fix. If the guard discards it because a correct fix must be slower,
+that decision is for the human: stop the loop and tell the human which kept commit
+gives which wrong result. Do not build on a known wrong result.
 
 With `--json`, `eval` prints one JSON object to stdout with (at least) these
 fields:
@@ -115,7 +139,7 @@ fields:
 
 `status` is one of `KEEP`, `DISCARD`, `FAIL`, `CRASH` — or `ABORTED`, which is
 not a verdict at all but an interrupted experiment; see "Stopping" below.
-`reason` is a stable, machine-readable code (e.g. `improved`,
+`reason` is a stable, machine-readable code (e.g. `improved`, `correctness_fix`,
 `no_significant_improvement`, `improvement_below_min_effect`,
 `guard_regression`, `scope_violation`, `new_test_file`, `build_failed`,
 `vet_failed`, `tests_failed`, `timeout`, `stop_forced`).
@@ -138,7 +162,7 @@ guard and by how much.
 `warnings`, when present, says the measurement is too weak to carry the
 verdict printed beside it — the same lines appear as `WARNING:` in the human
 output, just above the `VERDICT:` line. They never change the decision; they
-tell you not to over-read it. Two you may see:
+tell you not to over-read it. Three you may see:
 
 - **too few rounds for a confidence interval** — the numbers are still the
   measured medians, but the interval around them is unbounded. Raise `count`.
@@ -148,6 +172,8 @@ tell you not to over-read it. Two you may see:
   is. Every experiment will `DISCARD` until `count` is raised, so treat this
   as a broken configuration and stop rather than continuing to burn the night
   on experiments that cannot be banked.
+- **allocs/op went from 0 to N** — a benchmark that made no allocations now makes
+  some. A percentage cannot show this change, so check it yourself.
 
 **What `base_ns` means changes as the run progresses.** It is NOT always the
 commit `baseline` recorded — it is whatever the harness's measurement
@@ -206,6 +232,9 @@ If the human wants the run to continue after all, they clear the request with
 for or ask about.
 
 ## Logging
+
+`.autor3search/slowdowns.tsv` is also HARNESS-OWNED. It lists the slowdowns in
+kept experiments for `report`. Never edit it.
 
 `results.tsv` is HARNESS-OWNED. `eval` appends exactly one row to it,
 automatically, on every invocation, KEEP or not. You must never create,
@@ -306,5 +335,6 @@ more radical change.
 
 Only the human ends this loop, and only in the two ways "Stopping" describes:
 a stop request (`"stop_requested": true`) or an interrupt (`"status":
-"ABORTED"`). Running out of ideas is not one of them, and neither is a long
+"ABORTED"`). The one exception is a known wrong result that the guard does not let
+you fix (see "Output format"). Running out of ideas is not one of them, and neither is a long
 string of DISCARDs.

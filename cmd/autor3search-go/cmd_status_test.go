@@ -46,6 +46,7 @@ func TestStatusCountsExperimentsByStatus(t *testing.T) {
 		{Commit: "aaa1111", Score: 0.91, Status: "keep", Description: "prealloc-map"},
 		{Commit: "bbb2222", Score: 0.99, Status: "discard", Description: "byte-scan"},
 		{Commit: "ccc3333", Score: 1.00, Status: "fail", Description: "edited-test"},
+		{Commit: "ddd4444", Score: 1.00, Status: "fix", Description: "overflow"},
 	} {
 		if err := results.Append(path, r); err != nil {
 			t.Fatal(err)
@@ -53,7 +54,7 @@ func TestStatusCountsExperimentsByStatus(t *testing.T) {
 	}
 
 	stdout := captureStdout(t, func() { runStatus([]string{"-C", dir}) })
-	for _, want := range []string{"3 run", "1 keep", "1 discard", "1 fail"} {
+	for _, want := range []string{"4 run", "1 keep", "1 fix", "1 discard", "1 fail"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("status output missing %q:\n%s", want, stdout)
 		}
