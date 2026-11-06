@@ -90,6 +90,12 @@ not bank them. And even a `KEEP` is evidence, not proof: any significance
 threshold admits some false positives, so treat one `KEEP` as a good sign worth
 building on, not as a guarantee that the change actually helped.
 
+**A large win in one function can also `KEEP`.** The score counts every declared
+benchmark, so a change to one function can hardly move it. If the score misses
+the bar, `eval` still returns `KEEP` with the reason `local_improvement` when the
+score is below 1, one benchmark improved by at least `min_local_effect_pct`
+(default 10%) past the corrected bar, and no benchmark got slower past that bar.
+
 **A `KEEP` does not prove that the code is correct.** It proves only that the
 frozen tests pass. They can miss a wrong answer that a new fast path adds, for
 example an overflow at a boundary value. When you add a fast path, compare its
@@ -139,7 +145,7 @@ fields:
 
 `status` is one of `KEEP`, `DISCARD`, `FAIL`, `CRASH` — or `ABORTED`, which is
 not a verdict at all but an interrupted experiment; see "Stopping" below.
-`reason` is a stable, machine-readable code (e.g. `improved`, `correctness_fix`,
+`reason` is a stable, machine-readable code (e.g. `improved`, `local_improvement`, `correctness_fix`,
 `no_significant_improvement`, `improvement_below_min_effect`,
 `guard_regression`, `scope_violation`, `new_test_file`, `build_failed`,
 `vet_failed`, `tests_failed`, `timeout`, `stop_forced`).

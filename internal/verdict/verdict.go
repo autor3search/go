@@ -25,6 +25,7 @@ type Reason string
 // Reasons, grouped by the stage that produces them.
 const (
 	ReasonImproved         Reason = "improved"
+	ReasonLocalWin         Reason = "local_improvement"
 	ReasonCorrectnessFix   Reason = "correctness_fix"
 	ReasonNoImprovement    Reason = "no_significant_improvement"
 	ReasonBelowMinEffect   Reason = "improvement_below_min_effect"
@@ -52,6 +53,10 @@ type Input struct {
 	// The zero value requires only Score < 1, matching the pre-Bonferroni
 	// rule; internal/config.Default sets this to 1.0 for real runs.
 	MinEffectPct float64
+	// MinLocalEffectPct is the improvement, as a percentage, that one benchmark
+	// needs to qualify for KEEP when the geomean is below MinEffectPct. See
+	// rule 3 of Decide. Zero turns rule 3 off.
+	MinLocalEffectPct float64
 	// Fix says the human or agent declared this commit a correctness fix. See
 	// Decide.
 	Fix bool
@@ -86,6 +91,7 @@ func Gate(status Status, reason Reason, message string) Result {
 //     would make the guard less sensitive to harm — backwards from what a
 //     guard is for. The asymmetry is intentional: be conservative about
 //     accepting a win, be liberal about catching a regression.
+//
 //  2. Otherwise keep only when BOTH:
 //     a. the score is a real speedup by at least MinEffectPct — Score must
 //     be below 1 - MinEffectPct/100, not merely below 1. A result that is
@@ -99,7 +105,21 @@ func Gate(status Status, reason Reason, message string) Result {
 //     spurious "significant" improvement even when nothing changed);
 //     dividing alpha by k is the standard correction.
 //
-// A declared correctness fix (Input.Fix) skips rule 2 only. It still had to
+//  3. A change that misses 2a can still KEEP as a local win. The geomean counts
+//     every benchmark equally, also those that do not run the changed code, so
+//     a large win in one function can round to almost nothing. Rule 3 needs ALL
+//     of these:
+//     a. the score is below 1,
+//     b. one benchmark improved at alpha/k by at least MinLocalEffectPct, and
+//     by at least MinEffectPct, so a local win never clears a lower bar than
+//     the one the user set for the score,
+//     c. no benchmark got slower at alpha/k, by any amount.
+//     Rule 3c uses the corrected alpha although rule 1 does not. Rule 1 has a
+//     size limit, and rule 3c has none. At the raw alpha, about 1 benchmark in
+//     40 looks slower by chance, so a repo with many benchmarks could never
+//     have a local win.
+//
+// A declared correctness fix (Input.Fix) skips rules 2 and 3. It still had to
 // pass every correctness gate to get here, and rule 1 still applies.
 //
 // A change that clears 2b but misses 2a discards with
@@ -183,6 +203,16 @@ func Decide(in Input) Result {
 	// different next moves, and reporting the second as the first would
 	// tell an agent its change had no effect when it measurably did.
 	if improved && in.Score < 1 {
+		if win, ok := localWin(in, k); ok {
+			return Result{
+				Status: StatusKeep,
+				Reason: ReasonLocalWin,
+				Score:  in.Score,
+				Message: fmt.Sprintf("local win: %s %+.1f%%, no benchmark slower, score %.4f (%+.2f%%)",
+					win.Name, win.PctChange, in.Score, (in.Score-1)*100),
+				Warnings: warnings,
+			}
+		}
 		return Result{
 			Status: StatusDiscard,
 			Reason: ReasonBelowMinEffect,
@@ -199,6 +229,29 @@ func Decide(in Input) Result {
 		Message:  fmt.Sprintf("score %.4f (%+.2f%%), no significant improvement", in.Score, (in.Score-1)*100),
 		Warnings: warnings,
 	}
+}
+
+// localWin applies rules 3b and 3c of Decide, and returns the benchmark with
+// the largest qualifying improvement.
+func localWin(in Input, k int) (bench.Delta, bool) {
+	if in.MinLocalEffectPct <= 0 {
+		return bench.Delta{}, false
+	}
+	need := max(in.MinLocalEffectPct, in.MinEffectPct)
+	var win bench.Delta
+	found := false
+	for _, d := range in.Deltas {
+		if d.P >= d.Alpha/float64(k) {
+			continue
+		}
+		if d.PctChange > 0 {
+			return bench.Delta{}, false
+		}
+		if d.PctChange <= -need && (!found || d.PctChange < win.PctChange) {
+			win, found = d, true
+		}
+	}
+	return win, found
 }
 
 // measurementWarnings gathers everything that qualifies how far the numbers

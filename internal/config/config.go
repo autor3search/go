@@ -34,6 +34,10 @@ type Config struct {
 	// A change that clears significance but is smaller than this is treated
 	// as not worth a commit in an unattended loop.
 	MinEffectPct float64 `yaml:"min_effect_pct"`
+	// MinLocalEffectPct lets a change KEEP when its score misses MinEffectPct:
+	// one benchmark must improve by this percentage, and no benchmark may get
+	// slower. See verdict.Decide. Zero turns this off.
+	MinLocalEffectPct float64 `yaml:"min_local_effect_pct"`
 	// GOMAXPROCS pins parallelism during measurement. 0 leaves it alone.
 	GOMAXPROCS int `yaml:"gomaxprocs"`
 	// Timeout bounds each subprocess phase.
@@ -45,13 +49,14 @@ type Config struct {
 // Default returns the configuration used when a field is omitted.
 func Default() Config {
 	return Config{
-		Scope:         []string{"./..."},
-		Count:         10,
-		Benchtime:     "1s",
-		Race:          true,
-		MaxRegressPct: 5.0,
-		MinEffectPct:  1.0,
-		Timeout:       "15m",
+		Scope:             []string{"./..."},
+		Count:             10,
+		Benchtime:         "1s",
+		Race:              true,
+		MaxRegressPct:     5.0,
+		MinEffectPct:      1.0,
+		MinLocalEffectPct: 10.0,
+		Timeout:           "15m",
 	}
 }
 
@@ -93,6 +98,9 @@ func (c Config) Validate() error {
 	}
 	if c.MinEffectPct < 0 || c.MinEffectPct >= 100 {
 		return errors.New("min_effect_pct must be at least 0 and less than 100")
+	}
+	if c.MinLocalEffectPct < 0 || c.MinLocalEffectPct >= 100 {
+		return errors.New("min_local_effect_pct must be at least 0 and less than 100")
 	}
 	if len(c.Scope) == 0 {
 		return errors.New("scope must list at least one path pattern")

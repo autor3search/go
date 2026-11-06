@@ -704,7 +704,7 @@ func BenchmarkNoAlloc(b *testing.B) {
 	// experiment. res.Reason must be one of the post-measurement reasons,
 	// not any gate-failure reason.
 	switch res.Reason {
-	case verdict.ReasonImproved, verdict.ReasonNoImprovement,
+	case verdict.ReasonImproved, verdict.ReasonLocalWin, verdict.ReasonNoImprovement,
 		verdict.ReasonBelowMinEffect, verdict.ReasonGuardRegression:
 		// expected: a normal, scored outcome.
 	default:

@@ -403,3 +403,54 @@ func TestDecideFixNeedsNoSpeedupButTheGuardStillApplies(t *testing.T) {
 		t.Errorf("without Fix: got %s, want DISCARD", res.Status)
 	}
 }
+
+// localDeltas returns one benchmark with the given change and p-value, plus
+// 99 benchmarks that did not move. The family size k is 100, so the corrected
+// threshold is 0.05/100 = 0.0005.
+func localDeltas(pct, p float64) []bench.Delta {
+	out := []bench.Delta{dp("Hot", pct, p, 0.05)}
+	for i := 0; i < 99; i++ {
+		out = append(out, dp(fmt.Sprintf("Other%d", i), 0, 0.9, 0.05))
+	}
+	return out
+}
+
+func TestDecideLocalWin(t *testing.T) {
+	regressAt := func(pct, p float64) []bench.Delta {
+		out := localDeltas(-50, 0.0001)
+		out[1] = dp("Other0", pct, p, 0.05)
+		return out
+	}
+	cases := []struct {
+		name       string
+		deltas     []bench.Delta
+		score      float64
+		minEffect  float64
+		minLocal   float64
+		wantStatus Status
+		wantReason Reason
+	}{
+		{"large local win the geomean hides", localDeltas(-50, 0.0001), 0.9931, 1, 10, StatusKeep, ReasonLocalWin},
+		{"exactly at the local minimum", localDeltas(-10, 0.0001), 0.9989, 1, 10, StatusKeep, ReasonLocalWin},
+		{"just under the local minimum", localDeltas(-9.9, 0.0001), 0.9990, 1, 10, StatusDiscard, ReasonBelowMinEffect},
+		{"local win not past the corrected alpha", localDeltas(-50, 0.001), 0.9931, 1, 10, StatusDiscard, ReasonNoImprovement},
+		{"other benchmark slower past the corrected alpha", regressAt(1, 0.0001), 0.9932, 1, 10, StatusDiscard, ReasonBelowMinEffect},
+		{"other benchmark slower only at the raw alpha", regressAt(1, 0.01), 0.9932, 1, 10, StatusKeep, ReasonLocalWin},
+		{"guard still rejects a slowdown past the limit", regressAt(12, 0.01), 0.9942, 1, 10, StatusDiscard, ReasonGuardRegression},
+		{"overall score not better", localDeltas(-50, 0.0001), 1.001, 1, 10, StatusDiscard, ReasonNoImprovement},
+		{"zero turns the rule off", localDeltas(-50, 0.0001), 0.9931, 1, 0, StatusDiscard, ReasonBelowMinEffect},
+		{"a higher min_effect_pct also binds the local win", localDeltas(-12, 0.0001), 0.9987, 15, 10, StatusDiscard, ReasonBelowMinEffect},
+		{"the geomean rule still wins when both pass", localDeltas(-90, 0.0001), 0.977, 1, 10, StatusKeep, ReasonImproved},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := Decide(Input{Deltas: c.deltas, Score: c.score, MaxRegressPct: 5, MinEffectPct: c.minEffect, MinLocalEffectPct: c.minLocal})
+			if got.Status != c.wantStatus || got.Reason != c.wantReason {
+				t.Fatalf("got %s/%s (%s), want %s/%s", got.Status, got.Reason, got.Message, c.wantStatus, c.wantReason)
+			}
+			if got.Reason == ReasonLocalWin && !strings.Contains(got.Message, "Hot") {
+				t.Errorf("Message = %q, want the name of the benchmark", got.Message)
+			}
+		})
+	}
+}

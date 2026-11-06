@@ -409,6 +409,18 @@ not a redefinition of "significant"; `autor3search-go eval`'s output calls out a
 benchmark that is significant at `alpha` but did not clear the corrected bar,
 rather than silently calling it "not significant."
 
+A change that misses rule 1 can still `KEEP` as a **local win**, with the reason
+`local_improvement`. The score counts every benchmark equally, also those that do
+not run the changed code, so a large win in one function can hardly move it: a 50%
+win on 1 of 100 benchmarks gives a score of 0.993. A local win needs all of:
+
+- a score below 1,
+- one benchmark past the corrected `alpha / k` that improved by at least
+  `min_local_effect_pct` (default 10%) and at least `min_effect_pct`,
+- no benchmark slower past `alpha / k`, by any amount, and rule 3 above.
+
+Set `min_local_effect_pct: 0` to turn this off.
+
 A discard distinguishes the two ways rule 1 and rule 2 can fail.
 `no_significant_improvement` means nothing measurably moved.
 `improvement_below_min_effect` means the change really did speed things up,
