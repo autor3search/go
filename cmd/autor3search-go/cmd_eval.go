@@ -560,6 +560,9 @@ func printHuman(res verdict.Result, timeDeltas, allocsDeltas []bench.Delta, cfg 
 	}
 	fmt.Printf("\nSCORE  %.3f  (%+.1f%%)   min effect: %.1f%%   guard: max regress %+.1f%% < %.1f%% %s\n",
 		res.Score, (res.Score-1)*100, cfg.MinEffectPct, worst, cfg.MaxRegressPct, guard)
+	if res.Reason == verdict.ReasonLocalWin {
+		fmt.Println(res.Message)
+	}
 	printWarnings(res.Warnings)
 	fmt.Printf("\nVERDICT: %s\n", res.Status)
 	printStopNotice(rc)

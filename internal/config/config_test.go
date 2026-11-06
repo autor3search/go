@@ -178,3 +178,21 @@ func TestTimeoutDuration(t *testing.T) {
 		t.Errorf("d = %v, want 90s", d)
 	}
 }
+
+func TestMinLocalEffectPct(t *testing.T) {
+	if got := Default().MinLocalEffectPct; got != 10 {
+		t.Errorf("Default().MinLocalEffectPct = %v, want 10", got)
+	}
+	for _, bad := range []float64{-1, 100, 150} {
+		c := Default()
+		c.MinLocalEffectPct = bad
+		if err := c.Validate(); err == nil {
+			t.Errorf("Validate() with min_local_effect_pct: %v = nil, want an error", bad)
+		}
+	}
+	c := Default()
+	c.MinLocalEffectPct = 0
+	if err := c.Validate(); err != nil {
+		t.Errorf("Validate() with min_local_effect_pct: 0 = %v, want nil", err)
+	}
+}

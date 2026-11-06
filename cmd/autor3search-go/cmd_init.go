@@ -191,6 +191,13 @@ func renderConfig(cfg config.Config) []byte {
 	b.WriteString("# of 1.0 requires at least a 1% real improvement.\n")
 	fmt.Fprintf(&b, "min_effect_pct: %s\n\n", strconv.FormatFloat(cfg.MinEffectPct, 'g', -1, 64))
 
+	b.WriteString("# MinLocalEffectPct lets a change KEEP when its score misses min_effect_pct.\n")
+	b.WriteString("# The score counts every benchmark, also those that do not run the changed\n")
+	b.WriteString("# code, so a large win in one function can hardly move it. One benchmark must\n")
+	b.WriteString("# improve by this percentage (and by min_effect_pct), the score must be below\n")
+	b.WriteString("# 1, and no benchmark may get slower. 0 turns this off.\n")
+	fmt.Fprintf(&b, "min_local_effect_pct: %s\n\n", strconv.FormatFloat(cfg.MinLocalEffectPct, 'g', -1, 64))
+
 	b.WriteString("# GOMAXPROCS pins parallelism during measurement for more repeatable\n")
 	b.WriteString("# numbers. 0 leaves GOMAXPROCS alone.\n")
 	fmt.Fprintf(&b, "gomaxprocs: %d\n\n", cfg.GOMAXPROCS)

@@ -385,11 +385,12 @@ func Eval(ctx context.Context, o Options) (verdict.Result, *Measurements, error)
 	}
 
 	result := verdict.Decide(verdict.Input{
-		Deltas:        timeDeltas,
-		Score:         score,
-		MaxRegressPct: o.Cfg.MaxRegressPct,
-		MinEffectPct:  o.Cfg.MinEffectPct,
-		Fix:           o.Fix,
+		Deltas:            timeDeltas,
+		Score:             score,
+		MaxRegressPct:     o.Cfg.MaxRegressPct,
+		MinEffectPct:      o.Cfg.MinEffectPct,
+		MinLocalEffectPct: o.Cfg.MinLocalEffectPct,
+		Fix:               o.Fix,
 	})
 	for _, a := range allocs.Appeared {
 		result.Warnings = append(result.Warnings,
