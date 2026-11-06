@@ -10,7 +10,7 @@ func setOf(t *testing.T, name string, vals ...float64) *Set {
 	t.Helper()
 	s := NewSet()
 	for _, v := range vals {
-		s.record(name, UnitTime, v)
+		s.record(name, baseName(name), UnitTime, v)
 	}
 	return s
 }
@@ -94,14 +94,14 @@ func TestGeoMeanEmptyIsAnError(t *testing.T) {
 
 func TestCompareAllErrorsWhenBenchmarkDisappears(t *testing.T) {
 	base := NewSet()
-	base.record("BenchmarkA", UnitTime, 10)
-	base.record("BenchmarkA", UnitTime, 11)
-	base.record("BenchmarkGone", UnitTime, 5)
-	base.record("BenchmarkGone", UnitTime, 5)
+	base.record("BenchmarkA", baseName("BenchmarkA"), UnitTime, 10)
+	base.record("BenchmarkA", baseName("BenchmarkA"), UnitTime, 11)
+	base.record("BenchmarkGone", baseName("BenchmarkGone"), UnitTime, 5)
+	base.record("BenchmarkGone", baseName("BenchmarkGone"), UnitTime, 5)
 
 	cand := NewSet()
-	cand.record("BenchmarkA", UnitTime, 9)
-	cand.record("BenchmarkA", UnitTime, 9)
+	cand.record("BenchmarkA", baseName("BenchmarkA"), UnitTime, 9)
+	cand.record("BenchmarkA", baseName("BenchmarkA"), UnitTime, 9)
 
 	ds, err := CompareAll(base, cand, UnitTime)
 	if err == nil {
@@ -127,21 +127,21 @@ func contains(s, substr string) bool {
 func TestCompareAllSortedByName(t *testing.T) {
 	base := NewSet()
 	// Insert in non-alphabetical order: C, A, B
-	base.record("BenchmarkC", UnitTime, 10)
-	base.record("BenchmarkC", UnitTime, 11)
-	base.record("BenchmarkA", UnitTime, 20)
-	base.record("BenchmarkA", UnitTime, 21)
-	base.record("BenchmarkB", UnitTime, 30)
-	base.record("BenchmarkB", UnitTime, 31)
+	base.record("BenchmarkC", baseName("BenchmarkC"), UnitTime, 10)
+	base.record("BenchmarkC", baseName("BenchmarkC"), UnitTime, 11)
+	base.record("BenchmarkA", baseName("BenchmarkA"), UnitTime, 20)
+	base.record("BenchmarkA", baseName("BenchmarkA"), UnitTime, 21)
+	base.record("BenchmarkB", baseName("BenchmarkB"), UnitTime, 30)
+	base.record("BenchmarkB", baseName("BenchmarkB"), UnitTime, 31)
 
 	cand := NewSet()
 	// Insert in different order: B, C, A
-	cand.record("BenchmarkB", UnitTime, 9)
-	cand.record("BenchmarkB", UnitTime, 9)
-	cand.record("BenchmarkC", UnitTime, 19)
-	cand.record("BenchmarkC", UnitTime, 19)
-	cand.record("BenchmarkA", UnitTime, 29)
-	cand.record("BenchmarkA", UnitTime, 29)
+	cand.record("BenchmarkB", baseName("BenchmarkB"), UnitTime, 9)
+	cand.record("BenchmarkB", baseName("BenchmarkB"), UnitTime, 9)
+	cand.record("BenchmarkC", baseName("BenchmarkC"), UnitTime, 19)
+	cand.record("BenchmarkC", baseName("BenchmarkC"), UnitTime, 19)
+	cand.record("BenchmarkA", baseName("BenchmarkA"), UnitTime, 29)
+	cand.record("BenchmarkA", baseName("BenchmarkA"), UnitTime, 29)
 
 	ds, err := CompareAll(base, cand, UnitTime)
 	if err != nil {
@@ -240,7 +240,7 @@ func allocSet(series map[string][]float64) *Set {
 	s := NewSet()
 	for name, vals := range series {
 		for _, v := range vals {
-			s.record(name, UnitAllocs, v)
+			s.record(name, baseName(name), UnitAllocs, v)
 		}
 	}
 	return s

@@ -151,3 +151,69 @@ func TestValuesCopiesObservations(t *testing.T) {
 		}
 	}
 }
+
+const twoPackages = `goos: linux
+pkg: example.com/mod/json
+BenchmarkShared-8    100    10 ns/op
+BenchmarkOnlyJSON-8  100    20 ns/op
+BenchmarkShared-8    100    11 ns/op
+PASS
+pkg: example.com/mod/cbor
+BenchmarkShared-8    100    1000 ns/op
+BenchmarkShared-8    100    1001 ns/op
+PASS
+`
+
+func TestParseKeepsSameNameInTwoPackagesApart(t *testing.T) {
+	set, err := Parse(strings.NewReader(twoPackages))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"BenchmarkOnlyJSON-8",
+		"BenchmarkShared-8@example.com/mod/cbor",
+		"BenchmarkShared-8@example.com/mod/json",
+	}
+	if got := set.Names(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("Names() = %q, want %q", got, want)
+	}
+	for _, name := range want[1:] {
+		v, ok := set.Values(name, UnitTime)
+		if !ok || len(v) != 2 {
+			t.Errorf("%s: %d observations, want 2 from its own package", name, len(v))
+		}
+		if base := set.Series[name].Base; base != "BenchmarkShared" {
+			t.Errorf("%s: Base = %q, want BenchmarkShared", name, base)
+		}
+	}
+}
+
+func TestAddAndSelectKeepBaseOfQualifiedNames(t *testing.T) {
+	round, err := Parse(strings.NewReader(twoPackages))
+	if err != nil {
+		t.Fatal(err)
+	}
+	merged := NewSet()
+	merged.Add(round)
+	merged.Add(round)
+	name := "BenchmarkShared-8@example.com/mod/json"
+	if v, _ := merged.Values(name, UnitTime); len(v) != 4 {
+		t.Errorf("after two Add calls: %d observations, want 4", len(v))
+	}
+	got := merged.SelectByBase([]string{"BenchmarkShared"}).Names()
+	want := []string{"BenchmarkShared-8@example.com/mod/cbor", name}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("SelectByBase = %q, want %q", got, want)
+	}
+}
+
+func TestParseKeepsPlainNameWhenOnePackageRepeatsIt(t *testing.T) {
+	set, err := Parse(strings.NewReader("pkg: example.com/a\nBenchmarkX-8 1 5 ns/op\nBenchmarkX-8 1 6 ns/op\npkg: example.com/b\nBenchmarkY-8 1 7 ns/op\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"BenchmarkX-8", "BenchmarkY-8"}
+	if got := set.Names(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("Names() = %q, want %q", got, want)
+	}
+}

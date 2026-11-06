@@ -37,7 +37,9 @@ type Metric struct {
 
 // Series holds every metric measured for a single benchmark.
 type Series struct {
-	// Name is the full name as reported, e.g. "BenchmarkParse/big-10".
+	// Name is the full name as reported, e.g. "BenchmarkParse/big-10". When two
+	// packages report the same name, Name also holds the package, e.g.
+	// "BenchmarkParse/big-10@example.com/mod/json", to keep their samples apart.
 	Name string
 	// Base is the root benchmark name with sub-benchmark parts and the
 	// GOMAXPROCS suffix stripped, e.g. "BenchmarkParse". Config selects on this.
@@ -56,7 +58,8 @@ func NewSet() *Set { return &Set{Series: map[string]*Series{}} }
 // Parse reads Go benchmark format, ignoring any non-benchmark lines.
 // Returns an error if the input contains syntax errors or I/O errors.
 func Parse(r io.Reader) (*Set, error) {
-	set := NewSet()
+	var rows []observation
+	pkgs := map[string]map[string]bool{}
 	rd := benchfmt.NewReader(r, "bench")
 	var syntaxErrors []*benchfmt.SyntaxError
 	for rd.Scan() {
@@ -69,8 +72,13 @@ func Parse(r io.Reader) (*Set, error) {
 			if !strings.HasPrefix(name, benchPrefix) {
 				name = benchPrefix + name
 			}
+			pkg := res.GetConfig("pkg")
+			if pkgs[name] == nil {
+				pkgs[name] = map[string]bool{}
+			}
+			pkgs[name][pkg] = true
 			for _, v := range res.Values {
-				set.record(name, v.Unit, v.Value)
+				rows = append(rows, observation{name, pkg, v.Unit, v.Value})
 			}
 		case *benchfmt.SyntaxError:
 			syntaxErrors = append(syntaxErrors, res)
@@ -83,16 +91,35 @@ func Parse(r io.Reader) (*Set, error) {
 	if err := rd.Err(); err != nil {
 		return nil, fmt.Errorf("parse benchmark output: %w", err)
 	}
+	set := NewSet()
+	for _, o := range rows {
+		key := o.name
+		if len(pkgs[o.name]) > 1 {
+			key = o.name + "@" + o.pkg
+		}
+		set.record(key, baseName(o.name), o.unit, o.value)
+	}
 	return set, nil
 }
 
-func (s *Set) record(name, unit string, value float64) {
+// observation is one measured value, before Parse knows every package.
+type observation struct {
+	name, pkg, unit string
+	value           float64
+}
+
+// baseName returns the root benchmark name of a name as go test reports it.
+func baseName(name string) string {
+	base := string(benchfmt.Name(name).Base())
+	if !strings.HasPrefix(base, benchPrefix) {
+		base = benchPrefix + base
+	}
+	return base
+}
+
+func (s *Set) record(name, base, unit string, value float64) {
 	ser, ok := s.Series[name]
 	if !ok {
-		base := string(benchfmt.Name(name).Base())
-		if !strings.HasPrefix(base, benchPrefix) {
-			base = benchPrefix + base
-		}
 		ser = &Series{
 			Name:    name,
 			Base:    base,
@@ -150,9 +177,10 @@ func (s *Set) Has(name, unit string) bool {
 // Add appends every observation in other into s, preserving order.
 func (s *Set) Add(other *Set) {
 	for _, name := range other.Names() {
-		for unit, m := range other.Series[name].Metrics {
+		ser := other.Series[name]
+		for unit, m := range ser.Metrics {
 			for _, v := range m.Values {
-				s.record(name, unit, v)
+				s.record(name, ser.Base, unit, v)
 			}
 		}
 	}
@@ -182,7 +210,7 @@ func (s *Set) SelectByBase(bases []string) *Set {
 		}
 		for unit, m := range ser.Metrics {
 			for _, v := range m.Values {
-				out.record(name, unit, v)
+				out.record(name, ser.Base, unit, v)
 			}
 		}
 	}
