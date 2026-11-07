@@ -67,6 +67,40 @@ func TestBuildVetTestSucceed(t *testing.T) {
 	}
 }
 
+// TestTestRunsOnlyTheGivenPackages: a module whose root package test
+// fails, as it does when it needs a server that is not running, must still
+// pass when the test step is limited to a package that passes.
+func TestTestRunsOnlyTheGivenPackages(t *testing.T) {
+	dir := tinyModule(t)
+	if err := os.WriteFile(filepath.Join(dir, "server_test.go"), []byte("package tiny\n\nimport \"testing\"\n\nfunc TestNeedsServer(t *testing.T) { t.Fatal(\"no server\") }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(dir, "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "sub_test.go"), []byte("package sub\n\nimport \"testing\"\n\nfunc TestOK(t *testing.T) {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := New(dir, 2*time.Minute, nil)
+	ctx := context.Background()
+
+	all, err := r.Test(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if all.OK() {
+		t.Fatal("the whole module passed, want the root package test to fail")
+	}
+	some, err := r.Test(ctx, false, "./sub/...")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !some.OK() {
+		t.Fatalf("./sub/... failed: exit=%d\n%s", some.ExitCode, some.Tail(20))
+	}
+}
+
 func TestBenchProducesParseableOutput(t *testing.T) {
 	r := New(tinyModule(t), 2*time.Minute, nil)
 	res, err := r.Bench(context.Background(), "^BenchmarkAdd$", "10ms")

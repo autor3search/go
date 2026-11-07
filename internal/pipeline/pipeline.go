@@ -295,8 +295,12 @@ func Eval(ctx context.Context, o Options) (verdict.Result, *Measurements, error)
 		return verdict.Gate(verdict.StatusFail, verdict.ReasonVet, res.Tail(30)), nil, nil
 	}
 
-	// 5. Tests. Correctness is never traded for speed.
-	if res, err := r.Test(ctx, o.Cfg.Race); err != nil {
+	// 5. Tests. Correctness is never traded for speed. Only the packages in
+	// scope run: the agent can edit only those, and their tests are the
+	// frozen ones. A package outside scope can have tests that need a
+	// server or other setup the run does not have. Build and vet above
+	// still cover the whole module.
+	if res, err := r.Test(ctx, o.Cfg.Race, o.Cfg.Scope...); err != nil {
 		return verdict.Result{}, nil, err
 	} else if res.TimedOut {
 		return verdict.Gate(verdict.StatusCrash, verdict.ReasonTimeout, "go test timed out"), nil, nil

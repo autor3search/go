@@ -458,7 +458,11 @@ func gateColumn(stages []gateStage) int {
 }
 
 func gateStages(cfg config.Config) []gateStage {
-	testLabel := "go test ./..."
+	pkgs := cfg.Scope
+	if len(pkgs) == 0 {
+		pkgs = []string{"./..."}
+	}
+	testLabel := "go test " + strings.Join(pkgs, " ")
 	if cfg.Race {
 		testLabel += " -race"
 	}

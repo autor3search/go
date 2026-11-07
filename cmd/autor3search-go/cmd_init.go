@@ -150,7 +150,8 @@ func renderConfig(cfg config.Config) []byte {
 
 	b.WriteString("# Scope lists the package patterns (Go import path patterns, e.g. ./...)\n")
 	b.WriteString("# the agent is allowed to edit. Anything outside these patterns is rejected\n")
-	b.WriteString("# by the scope gate before it is even built.\n")
+	b.WriteString("# by the scope gate before it is even built. The test gate runs only the\n")
+	b.WriteString("# tests in these packages; build and vet still cover the whole module.\n")
 	writeYAMLList(&b, "scope", cfg.Scope)
 	b.WriteString("\n")
 
