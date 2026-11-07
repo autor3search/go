@@ -19,7 +19,8 @@ const Path = ".autor3search/config.yaml"
 type Config struct {
 	// Benchmarks is the declared benchmark set. Empty means all discovered.
 	Benchmarks []string `yaml:"benchmarks"`
-	// Scope lists the package patterns the agent may modify.
+	// Scope lists the package patterns the agent may modify. The test gate
+	// runs only the tests in these packages.
 	Scope []string `yaml:"scope"`
 	// Count is the number of measured rounds per side.
 	Count int `yaml:"count"`

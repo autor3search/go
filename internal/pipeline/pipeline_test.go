@@ -593,6 +593,33 @@ func TestEvalRejectsGoModEdit(t *testing.T) {
 	}
 }
 
+// TestEvalTestsOnlyInScopePackages: a test outside scope that cannot pass
+// here (for example, one that needs a database server) must not fail the
+// test gate. Build and vet still cover the whole module.
+func TestEvalTestsOnlyInScopePackages(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs the real correctness gates; skipped in -short")
+	}
+	env := setupRunWithBenchmarks(t, []string{"BenchmarkCountWords"}, map[string]string{
+		"needsserver/needsserver.go":      "package needsserver\n",
+		"needsserver/needsserver_test.go": "package needsserver\n\nimport \"testing\"\n\nfunc TestNeedsServer(t *testing.T) { t.Fatal(\"no server\") }\n",
+	})
+	env.Cfg.Scope = []string{"."}
+	writeOptimizedWordCount(t, env.Root)
+	commit(t, env.Root, "use strings.Builder")
+
+	res, _, err := Eval(context.Background(), env.Options())
+	if err != nil {
+		t.Fatalf("Eval: %v", err)
+	}
+	if res.Reason == verdict.ReasonTests {
+		t.Fatalf("status = %s/%s: a test outside scope failed the gate\nlog:\n%s", res.Status, res.Reason, env.Log)
+	}
+	if res.Status == verdict.StatusFail || res.Status == verdict.StatusCrash {
+		t.Fatalf("status = %s/%s (%s), want a measured verdict\nlog:\n%s", res.Status, res.Reason, res.Message, env.Log)
+	}
+}
+
 func TestEvalRejectsOutOfScopeEdit(t *testing.T) {
 	if testing.Short() {
 		t.Skip("runs the real correctness gates; skipped in -short")

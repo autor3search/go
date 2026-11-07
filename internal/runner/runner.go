@@ -172,9 +172,14 @@ func (r *Runner) Vet(ctx context.Context) (*Result, error) {
 	return r.Go(ctx, "vet", "./...")
 }
 
-// Test runs the full test suite, optionally under the race detector.
-func (r *Runner) Test(ctx context.Context, race bool) (*Result, error) {
-	args := []string{"test", "./...", "-count=1"}
+// Test runs the tests in pkgs, optionally under the race detector. With no
+// pkgs it runs the whole module ("./...").
+func (r *Runner) Test(ctx context.Context, race bool, pkgs ...string) (*Result, error) {
+	if len(pkgs) == 0 {
+		pkgs = []string{"./..."}
+	}
+	args := append([]string{"test"}, pkgs...)
+	args = append(args, "-count=1")
 	if race {
 		args = append(args, "-race")
 	}
