@@ -30,6 +30,9 @@ type Config struct {
 	Race bool `yaml:"race"`
 	// MaxRegressPct is the largest tolerated significant regression, percent.
 	MaxRegressPct float64 `yaml:"max_regress_pct"`
+	// ConfirmGuard measures the benchmarks that tripped the regression guard a
+	// second time, and discards only when the slowdown repeats.
+	ConfirmGuard bool `yaml:"confirm_guard"`
 	// MinEffectPct is the smallest geomean improvement, as a percentage,
 	// that a KEEP will accept: the score must be below 1 - MinEffectPct/100.
 	// A change that clears significance but is smaller than this is treated
@@ -55,6 +58,7 @@ func Default() Config {
 		Benchtime:         "1s",
 		Race:              true,
 		MaxRegressPct:     5.0,
+		ConfirmGuard:      true,
 		MinEffectPct:      1.0,
 		MinLocalEffectPct: 10.0,
 		Timeout:           "15m",

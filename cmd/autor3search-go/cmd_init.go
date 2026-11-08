@@ -181,6 +181,12 @@ func renderConfig(cfg config.Config) []byte {
 	b.WriteString("# rejects the whole experiment, however good the overall score.\n")
 	fmt.Fprintf(&b, "max_regress_pct: %s\n\n", strconv.FormatFloat(cfg.MaxRegressPct, 'g', -1, 64))
 
+	b.WriteString("# ConfirmGuard measures the benchmarks that tripped the regression guard a\n")
+	b.WriteString("# second time. The experiment is discarded only when the slowdown repeats.\n")
+	b.WriteString("# With many benchmarks, noise alone trips the guard on code that the change\n")
+	b.WriteString("# does not touch. Recommended: leave this on.\n")
+	fmt.Fprintf(&b, "confirm_guard: %t\n\n", cfg.ConfirmGuard)
+
 	b.WriteString("# MinEffectPct is the smallest geomean improvement, as a percentage, that\n")
 	b.WriteString("# KEEP will accept — the score must fall below 1 - min_effect_pct/100, not\n")
 	b.WriteString("# merely below 1. A change can be statistically significant and still be\n")

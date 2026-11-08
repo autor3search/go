@@ -388,14 +388,41 @@ func Eval(ctx context.Context, o Options) (verdict.Result, *Measurements, error)
 		}
 	}
 
-	result := verdict.Decide(verdict.Input{
+	in := verdict.Input{
 		Deltas:            timeDeltas,
 		Score:             score,
 		MaxRegressPct:     o.Cfg.MaxRegressPct,
 		MinEffectPct:      o.Cfg.MinEffectPct,
 		MinLocalEffectPct: o.Cfg.MinLocalEffectPct,
 		Fix:               o.Fix,
-	})
+	}
+	result := verdict.Decide(in)
+
+	// 7b. Confirm a guard trip with a second measurement of the tripped
+	// benchmarks only. See confirmGuardTrip.
+	if result.Reason == verdict.ReasonGuardRegression && o.Cfg.ConfirmGuard {
+		remeasure := func(names []string) ([]bench.Delta, error) {
+			b2, c2, err := measure.Run(ctx, measure.Options{
+				BaseDir:   worktreeDir,
+				CandDir:   o.Root,
+				Pattern:   guardPattern(names),
+				Benchtime: o.Cfg.Benchtime,
+				Rounds:    o.Cfg.Count,
+				Warmup:    true,
+				Timeout:   timeout,
+				Env:       benchEnv(o.Cfg),
+				Log:       o.Log,
+			})
+			if err != nil {
+				return nil, err
+			}
+			return bench.CompareAll(b2, c2, bench.UnitTime)
+		}
+		result, timeDeltas, err = confirmGuardTrip(in, result, remeasure)
+		if err != nil {
+			return verdict.Gate(verdict.StatusCrash, verdict.ReasonBuild, "confirm the guard trip: "+err.Error()), nil, nil
+		}
+	}
 	for _, a := range allocs.Appeared {
 		result.Warnings = append(result.Warnings,
 			fmt.Sprintf("%s: allocs/op went from 0 to %.0f, which the percentage deltas cannot show", a.Name, a.CandCenter))

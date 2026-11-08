@@ -196,3 +196,25 @@ func TestMinLocalEffectPct(t *testing.T) {
 		t.Errorf("Validate() with min_local_effect_pct: 0 = %v, want nil", err)
 	}
 }
+
+func TestLoadConfirmsGuardTripsUnlessTurnedOff(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.yaml")
+	os.WriteFile(p, []byte("scope:\n  - ./...\n"), 0o644)
+	got, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !got.ConfirmGuard {
+		t.Error("ConfirmGuard = false when omitted, want the default true")
+	}
+
+	os.WriteFile(p, []byte("scope:\n  - ./...\nconfirm_guard: false\n"), 0o644)
+	got, err = Load(p)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.ConfirmGuard {
+		t.Error("ConfirmGuard = true with confirm_guard: false")
+	}
+}

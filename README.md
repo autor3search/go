@@ -401,6 +401,11 @@ score = geomean(new_ns / base_ns)   across the declared benchmark set
    and applying it to the regression guard would make real regressions *easier* to
    miss. We want the opposite bias for harm: conservative about accepting a win,
    liberal about catching damage.
+   With many benchmarks, this also means that noise trips the guard on code that
+   the change does not touch. So when the guard trips, `eval` measures the
+   tripped benchmarks a second time and uses those numbers. The change is
+   discarded only when the slowdown repeats. Set `confirm_guard: false` to
+   discard on the first trip.
 
 A `Delta`'s reported significance (`p < alpha`, no correction) is always the raw,
 honest statistic — that's what a human or agent should see when reading a report.
