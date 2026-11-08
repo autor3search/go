@@ -80,6 +80,12 @@ the same way you would treat FAIL. `ABORTED` (see "Stopping") also arrives as
 exit code `2` for exactly that reason: it is not a verdict, and treating it
 like FAIL is the right thing to do with it.
 
+**A guard trip is measured twice.** When a benchmark gets slower past
+`max_regress_pct`, `eval` measures the tripped benchmarks again and discards only
+when the slowdown repeats. The warnings say whether each trip was confirmed. A
+confirmed trip on code that you did not touch can still be real, for example a
+change in code layout: do not rerun the same commit to get past it.
+
 **A `KEEP` requires a real, not just a technically significant, improvement.**
 `eval` only returns `KEEP` when `score` clears `1 - min_effect_pct/100` (default
 1%, i.e. score < 0.99) AND at least one benchmark improved past a

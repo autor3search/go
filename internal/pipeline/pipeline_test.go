@@ -1128,3 +1128,32 @@ func TestEvalFailsWhenFrozenTestIsUndiscoverable(t *testing.T) {
 		t.Errorf("message = %q, want it to name the undiscoverable file", res.Message)
 	}
 }
+
+// TestEvalDiscardsConfirmedRegression shows that the second measurement of a
+// guard trip does not let a real slowdown through.
+func TestEvalDiscardsConfirmedRegression(t *testing.T) {
+	if testing.Short() {
+		t.Skip("measures real benchmarks; skipped in -short")
+	}
+	env := setupRunWithBenchmarks(t, []string{"BenchmarkWork"}, workFixtureFiles(500000))
+
+	writeWorkSpins(t, env.Root, 1500000)
+	commit(t, env.Root, "make Work 3x slower")
+	res, _, err := Eval(context.Background(), env.Options())
+	if err != nil {
+		t.Fatalf("Eval: %v", err)
+	}
+	if res.Reason != verdict.ReasonGuardRegression {
+		t.Fatalf("reason = %s (%s), want guard_regression\nlog:\n%s", res.Reason, res.Message, env.Log)
+	}
+	confirmed := false
+	for _, w := range res.Warnings {
+		// The name can carry a GOMAXPROCS suffix, such as BenchmarkWork-10.
+		if strings.HasPrefix(w, "BenchmarkWork") && strings.Contains(w, ": guard trip confirmed") {
+			confirmed = true
+		}
+	}
+	if !confirmed {
+		t.Fatalf("warnings %q: want the trip confirmed by a second measurement", res.Warnings)
+	}
+}
