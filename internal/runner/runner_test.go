@@ -118,6 +118,38 @@ func TestBenchProducesParseableOutput(t *testing.T) {
 	}
 }
 
+// TestBenchMeasuresANestedWorkspaceModule: "./..." does not match a nested
+// module of a go.work workspace, so a scope package there must be passed to
+// Bench, or its benchmarks never run.
+func TestBenchMeasuresANestedWorkspaceModule(t *testing.T) {
+	dir := tinyModule(t)
+	nested := filepath.Join(dir, "nested")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		filepath.Join(dir, "go.work"):           "go 1.21\n\nuse (\n\t.\n\t./nested\n)\n",
+		filepath.Join(nested, "go.mod"):         "module nested\n\ngo 1.21\n",
+		filepath.Join(nested, "nested_test.go"): "package nested\n\nimport \"testing\"\n\nfunc BenchmarkNested(b *testing.B) {\n\tfor i := 0; i < b.N; i++ {\n\t}\n}\n",
+	}
+	for p, c := range files {
+		if err := os.WriteFile(p, []byte(c), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r := New(dir, 2*time.Minute, nil)
+	res, err := r.Bench(context.Background(), "^BenchmarkNested$", "10ms", "./...", "./nested/...")
+	if err != nil {
+		t.Fatalf("Bench: %v", err)
+	}
+	if !res.OK() {
+		t.Fatalf("bench failed: %s", res.Tail(20))
+	}
+	if !strings.Contains(string(res.Stdout), "BenchmarkNested") {
+		t.Fatalf("stdout lacks the nested benchmark line:\n%s", res.Stdout)
+	}
+}
+
 func TestBuildFailureIsReportedNotReturnedAsError(t *testing.T) {
 	dir := tinyModule(t)
 	os.WriteFile(filepath.Join(dir, "broken.go"), []byte("package tiny\n\nthis is not go\n"), 0o644)

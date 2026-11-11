@@ -104,6 +104,8 @@ type Options struct {
 	Pattern string
 	// Benchtime is the -benchtime value.
 	Benchtime string
+	// Pkgs are measured in addition to "./...", see runner.Bench.
+	Pkgs []string
 	// Rounds is the number of measured rounds per side.
 	Rounds int
 	// Warmup adds a discarded leading round.
@@ -125,7 +127,7 @@ func Run(ctx context.Context, o Options) (*bench.Set, *bench.Set, error) {
 		r := runner.New(dir, o.Timeout, o.Log)
 		r.Env = o.Env
 		return func(ctx context.Context, round int) (*bench.Set, error) {
-			res, err := r.Bench(ctx, o.Pattern, o.Benchtime)
+			res, err := r.Bench(ctx, o.Pattern, o.Benchtime, o.Pkgs...)
 			if err != nil {
 				return nil, err
 			}
