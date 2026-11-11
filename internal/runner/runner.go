@@ -187,16 +187,24 @@ func (r *Runner) Test(ctx context.Context, race bool, pkgs ...string) (*Result, 
 }
 
 // Bench runs one measurement round for the benchmarks matching pattern.
-// Tests are skipped via -run '^$' so only benchmark time is measured.
-func (r *Runner) Bench(ctx context.Context, pattern, benchtime string) (*Result, error) {
-	return r.Go(ctx,
-		"test", "./...",
+// Tests are skipped via -run '^$' so only benchmark time is measured. It
+// runs "./..." and also each of pkgs, so that a scope package in a nested
+// module of a go.work workspace, which "./..." does not match, is measured.
+func (r *Runner) Bench(ctx context.Context, pattern, benchtime string, pkgs ...string) (*Result, error) {
+	args := []string{"test", "./..."}
+	for _, p := range pkgs {
+		if p != "./..." {
+			args = append(args, p)
+		}
+	}
+	args = append(args,
 		"-run", "^$",
 		"-bench", pattern,
 		"-benchmem",
 		"-benchtime", benchtime,
 		"-count=1",
 	)
+	return r.Go(ctx, args...)
 }
 
 // BenchProfile runs benchmarks with CPU and memory profiling.
